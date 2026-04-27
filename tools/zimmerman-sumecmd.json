@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-sumecmd",
+  "name": "Eric Zimmerman's SumECmd",
+  "executablePath": "EZTools\\net9\\SumECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/SumECmd.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing User Access Logs / SUM databases."
+}

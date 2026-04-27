@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-pecmd",
+  "name": "Eric Zimmerman's PECmd",
+  "executablePath": "EZTools\\net9\\PECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/PECmd.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing Windows Prefetch files."
+}

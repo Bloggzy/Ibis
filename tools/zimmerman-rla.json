@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-rla",
+  "name": "Eric Zimmerman's rla",
+  "executablePath": "EZTools\\net9\\rla.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/rla.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for replaying Windows Registry hive transaction logs."
+}

@@ -1,0 +1,12 @@
+{
+  "id": "regripper",
+  "name": "RegRipper",
+  "executablePath": "RegRipper\\rip.exe",
+  "installDirectory": ".",
+  "packageType": "zip",
+  "renameExtractedDirectoryFrom": "RegRipper3.0-master",
+  "renameExtractedDirectoryTo": "RegRipper",
+  "downloadUrl": "https://github.com/keydet89/RegRipper3.0/archive/refs/heads/master.zip",
+  "manualUrl": "https://github.com/keydet89/RegRipper3.0",
+  "notes": "Used for registry hive plugin output."
+}

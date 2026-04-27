@@ -1,0 +1,12 @@
+{
+  "id": "forensic-webhistory",
+  "name": "Forensic webhistory",
+  "executablePath": "ForensicWebHistory\\forensic-webhistory.exe",
+  "installDirectory": "ForensicWebHistory",
+  "packageType": "zip",
+  "downloadUrl": "latest-release",
+  "githubRepo": "acquiredsecurity/forensic-webhistory",
+  "assetPattern": "forensic-webhistory-windows-x86_64.zip",
+  "manualUrl": "https://github.com/acquiredsecurity/forensic-webhistory/releases/latest",
+  "notes": "Used for extracting browser history from mounted images or triage collections. Ibis runs it with --date-format iso."
+}

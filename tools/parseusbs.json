@@ -1,0 +1,11 @@
+{
+  "id": "parseusbs",
+  "name": "parseusbs",
+  "executablePath": "ParseUSBs\\parseusbs.exe",
+  "installDirectory": "ParseUSBs",
+  "packageType": "file",
+  "downloadFileName": "parseusbs.exe",
+  "downloadUrl": "https://github.com/khyrenz/parseusbs/raw/refs/heads/main/parseusbs.exe",
+  "manualUrl": "https://github.com/khyrenz/parseusbs",
+  "notes": "Used for parsing USB artefacts."
+}

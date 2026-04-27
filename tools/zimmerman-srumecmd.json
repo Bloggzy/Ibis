@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-srumecmd",
+  "name": "Eric Zimmerman's SrumECmd",
+  "executablePath": "EZTools\\net9\\SrumECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/SrumECmd.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing SRUM databases."
+}

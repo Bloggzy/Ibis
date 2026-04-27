@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-lecmd",
+  "name": "Eric Zimmerman's LECmd",
+  "executablePath": "EZTools\\net9\\LECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/LECmd.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing Windows LNK files."
+}

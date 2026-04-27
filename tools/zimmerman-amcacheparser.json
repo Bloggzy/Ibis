@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-amcacheparser",
+  "name": "Eric Zimmerman's AmcacheParser",
+  "executablePath": "EZTools\\net9\\AmcacheParser.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/AmcacheParser.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing Windows Amcache.hve."
+}

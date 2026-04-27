@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-jlecmd",
+  "name": "Eric Zimmerman's JLECmd",
+  "executablePath": "EZTools\\net9\\JLECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/JLECmd.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing Windows JumpLists."
+}

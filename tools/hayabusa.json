@@ -1,0 +1,16 @@
+{
+  "id": "hayabusa",
+  "name": "Hayabusa",
+  "executablePath": "Hayabusa\\hayabusa.exe",
+  "installDirectory": "Hayabusa",
+  "packageType": "zip",
+  "downloadUrl": "latest-release",
+  "githubRepo": "Yamato-Security/hayabusa",
+  "assetPattern": "*win-x64.zip",
+  "renameExecutablePattern": "hayabusa*x64.exe",
+  "renameExecutableTo": "hayabusa.exe",
+  "defenderExclusionRecommended": true,
+  "defenderExclusionReason": "Hayabusa rule content can trigger antivirus false positives.",
+  "manualUrl": "https://github.com/Yamato-Security/hayabusa/releases/latest",
+  "notes": "Used for Windows Event Log detection and timelines."
+}

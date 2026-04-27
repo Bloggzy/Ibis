@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-appcompatcacheparser",
+  "name": "Eric Zimmerman's AppCompatCacheParser",
+  "executablePath": "EZTools\\net9\\AppCompatCacheParser.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/AppCompatCacheParser.zip",
+  "manualUrl": "https://ericzimmerman.github.io/#!index.md",
+  "notes": "Used for parsing AppCompatCache / ShimCache data from the SYSTEM hive."
+}

@@ -1,0 +1,16 @@
+{
+  "id": "takajo",
+  "name": "Takajo",
+  "executablePath": "Takajo\\takajo.exe",
+  "installDirectory": "Takajo",
+  "packageType": "zip",
+  "downloadUrl": "latest-release",
+  "githubRepo": "Yamato-Security/takajo",
+  "assetPattern": "*win-x64.zip",
+  "renameExecutablePattern": "takajo*x64.exe",
+  "renameExecutableTo": "takajo.exe",
+  "defenderExclusionRecommended": true,
+  "defenderExclusionReason": "Takajo and related rule content can trigger antivirus false positives.",
+  "manualUrl": "https://github.com/Yamato-Security/takajo/releases/latest",
+  "notes": "Used for analysing Hayabusa results."
+}

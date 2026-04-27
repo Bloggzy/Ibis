@@ -1,0 +1,10 @@
+{
+  "id": "browsinghistoryview",
+  "name": "NirSoft BrowsingHistoryView",
+  "executablePath": "BrowsingHistoryView\\BrowsingHistoryView.exe",
+  "installDirectory": "BrowsingHistoryView",
+  "packageType": "zip",
+  "downloadUrl": "https://www.nirsoft.net/utils/browsinghistoryview-x64.zip",
+  "manualUrl": "https://www.nirsoft.net/utils/browsing_history_view.html",
+  "notes": "Used for extracting browser history from user profiles."
+}

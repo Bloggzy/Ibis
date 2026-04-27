@@ -1,0 +1,10 @@
+{
+  "id": "zimmerman-mftecmd",
+  "name": "Eric Zimmerman's MFTECmd",
+  "executablePath": "EZTools\\net9\\MFTECmd.exe",
+  "installDirectory": "EZTools\\net9",
+  "packageType": "zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net9/MFTECmd.zip",
+  "manualUrl": "https://github.com/EricZimmerman/MFTECmd",
+  "notes": "Used for parsing NTFS metadata files such as $MFT and $J."
+}

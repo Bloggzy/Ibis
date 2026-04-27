@@ -1,0 +1,12 @@
+{
+  "id": "duckdb",
+  "name": "DuckDB CLI",
+  "executablePath": "DuckDB\\duckdb.exe",
+  "installDirectory": "DuckDB",
+  "packageType": "zip",
+  "downloadUrl": "latest-release",
+  "githubRepo": "duckdb/duckdb",
+  "assetPattern": "duckdb_cli-windows-amd64.zip",
+  "manualUrl": "https://github.com/duckdb/duckdb/releases/latest",
+  "notes": "Used for CSV post-processing and event log summaries."
+}
