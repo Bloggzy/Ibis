@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.5.6`
+Current version: `v0.5.7`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -99,7 +99,7 @@ Examples:
 - `HOSTNAME-MFTECmd-MFT-Output.csv`
 - `HOSTNAME-ParseUSBs-Log.txt`
 
-Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `Workings` folders where practical.
+Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. The underscore keeps these transparency/audit folders at the top of normal file listings.
 
 ## Processing Modules
 
@@ -249,4 +249,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.5.6`, both test runs pass with `115` tests.
+As of `v0.5.7`, both test runs pass with `115` tests.
+

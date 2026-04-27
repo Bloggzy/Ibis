@@ -4,6 +4,11 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.5.7 - 2026-04-27
+
+- Renamed module helper folders from `Workings` to `_Working` so transparency/audit folders sort to the top and stand out as special output.
+- Changed background processing command line hints so they are emitted through progress updates alongside the module that produced them, rather than being appended at the end of the run.
+
 ## v0.5.6 - 2026-04-27
 
 - Refreshed `README.md` as a prospective user/GitHub guide for the current GUI, workflow, tools, modules, logging, configuration, and test process.

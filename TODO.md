@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.5.6`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.5.7`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -78,9 +78,11 @@ This roadmap reflects the current state as of `v0.5.6`. The major first-pass pro
 - [x] Support blank hostname by writing directly to selected output and omitting filename prefix.
 - [x] Avoid placeholder `HOST` folders.
 - [x] Put final system summary text/JSON in host root.
-- [x] Put supporting/working files under `Workings`.
+- [x] Put supporting/working files under `_Working`.
 - [x] Use hostname-based output names for implemented modules.
 - [x] Rename timestamp-prefixed outputs from tools such as PECmd, SrumECmd, SumECmd, and user artefact tools.
+- [x] Use `_Working` folder names for special helper/transparency output folders.
+- [x] Emit processing command line hints through progress updates near the related module output.
 - [x] Treat absent artefact sources as skipped, not fatal.
 - [x] Treat missing tools as failed module results with summary JSON.
 - [x] Capture stderr for failed external tools where practical.
@@ -166,3 +168,4 @@ This roadmap reflects the current state as of `v0.5.6`. The major first-pass pro
 - [ ] Should module output folder names avoid spaces everywhere, or preserve familiar names from the old script?
 - [ ] Should skipped modules write JSON summaries, or is no output preferable when evidence is absent?
 - [ ] Should the GUI expose a per-module advanced settings panel?
+

@@ -129,6 +129,11 @@ function Get-IbisCommandLineHint {
             return
         }
 
+        $valueType = $Value.GetType()
+        if ($valueType.IsPrimitive -or $Value -is [decimal] -or $Value -is [datetime] -or $Value -is [guid] -or $Value -is [enum]) {
+            return
+        }
+
         if ($Value -is [System.Collections.IDictionary]) {
             foreach ($key in $Value.Keys) {
                 if ([string]$key -eq 'CommandLine' -and -not [string]::IsNullOrWhiteSpace([string]$Value[$key])) {
@@ -890,6 +895,96 @@ function Start-IbisProcessingRunspace {
             }
         }
 
+        function Get-IbisProcessingCommandLineHint {
+            param([object]$InputObject)
+
+            $hints = New-Object System.Collections.Generic.List[string]
+            $seen = @{}
+
+            $visit = {
+                param($Value)
+
+                if ($null -eq $Value -or $Value -is [string]) {
+                    return
+                }
+
+                $valueType = $Value.GetType()
+                if ($valueType.IsPrimitive -or $Value -is [decimal] -or $Value -is [datetime] -or $Value -is [guid] -or $Value -is [enum]) {
+                    return
+                }
+
+                if ($Value -is [System.Collections.IDictionary]) {
+                    foreach ($key in $Value.Keys) {
+                        if ([string]$key -eq 'CommandLine' -and -not [string]::IsNullOrWhiteSpace([string]$Value[$key])) {
+                            $hint = [string]$Value[$key]
+                            if (-not $seen.ContainsKey($hint)) {
+                                $seen[$hint] = $true
+                                $hints.Add($hint)
+                            }
+                        }
+                        & $visit $Value[$key]
+                    }
+                    return
+                }
+
+                if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+                    foreach ($item in $Value) {
+                        & $visit $item
+                    }
+                    return
+                }
+
+                foreach ($property in @($Value.PSObject.Properties)) {
+                    if ($property.Name -eq 'CommandLine' -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                        $hint = [string]$property.Value
+                        if (-not $seen.ContainsKey($hint)) {
+                            $seen[$hint] = $true
+                            $hints.Add($hint)
+                        }
+                    }
+                    & $visit $property.Value
+                }
+            }
+
+            & $visit $InputObject
+            $hints.ToArray()
+        }
+
+        function Write-IbisProcessingCommandLineHints {
+            param(
+                [object]$Result,
+                [string]$ModuleId,
+                [string]$ModuleName,
+                [int]$Index,
+                [int]$Total
+            )
+
+            if ($null -eq $Result) {
+                return
+            }
+
+            $sourceObjects = @($Result)
+            if (-not [string]::IsNullOrWhiteSpace([string]$Result.JsonPath) -and (Test-Path -LiteralPath $Result.JsonPath -PathType Leaf)) {
+                try {
+                    $sourceObjects += Get-Content -LiteralPath $Result.JsonPath -Raw | ConvertFrom-Json
+                }
+                catch {
+                    Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ModuleId -ToolName $ModuleName -Stage 'Command line hint' -Message "Unable to read command line hints from summary JSON: $($Result.JsonPath)" -Index $Index -Total $Total -Status 'Warning'
+                }
+            }
+
+            $seen = @{}
+            foreach ($sourceObject in $sourceObjects) {
+                foreach ($hint in @(Get-IbisProcessingCommandLineHint -InputObject $sourceObject)) {
+                    if ($seen.ContainsKey($hint)) {
+                        continue
+                    }
+                    $seen[$hint] = $true
+                    Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ModuleId -ToolName $ModuleName -Stage 'Command line hint' -Message $hint -Index $Index -Total $Total -Status 'Info'
+                }
+            }
+        }
+
         $currentOutputRoot = $OutputRoot
         $currentHostname = $Hostname
         $preserveBlankHostname = [string]::IsNullOrWhiteSpace($Hostname)
@@ -944,6 +1039,7 @@ function Start-IbisProcessingRunspace {
                     }
 
                     Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Completed' -Message "$($result.ModuleId): $($result.Status) - $($result.Message)" -Index $index -Total $total -Status $result.Status
+                    Write-IbisProcessingCommandLineHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
                     if ($result.OutputPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputPath -Index $index -Total $total -Status 'Info' }
                     if ($result.OutputDirectory) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputDirectory -Index $index -Total $total -Status 'Info' }
                     if ($result.JsonPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Summary' -Message $result.JsonPath -Index $index -Total $total -Status 'Info' }
@@ -2410,7 +2506,6 @@ function Show-IbisGui {
                     Add-IbisLogLine -LogTextBox $logTextBox -Level 'ERROR' -Message "$($moduleResult.ModuleId) failed: $($moduleResult.ErrorMessage)"
                 }
                 if ($null -ne $moduleResult.Result) {
-                    Add-IbisCommandLineHints -LogTextBox $logTextBox -Result $moduleResult.Result -LogFilePath $sessionLogPath
                     Add-IbisFileOperationHints -Result $moduleResult.Result -LogFilePath $sessionLogPath
                 }
                 if ($moduleResult.Hostname -and $moduleResult.Hostname -ne 'Unknown') {

@@ -1900,7 +1900,7 @@ function Invoke-IbisPrepareRegistryHiveFile {
     $safeCacheGroup = ConvertTo-IbisSafeFileName -Value $CacheGroup -DefaultValue 'Registry-Hives'
     $safeHiveName = ConvertTo-IbisSafeFileName -Value $HiveName -DefaultValue 'Hive'
     $safeCacheKey = ConvertTo-IbisSafeFileName -Value $CacheKey -DefaultValue $safeHiveName
-    $cacheRoot = Join-Path $hostOutputRoot (Join-Path $safeCacheGroup 'Workings\Prepared-Hives')
+    $cacheRoot = Join-Path $hostOutputRoot (Join-Path $safeCacheGroup '_Working\Prepared-Hives')
     $hiveCacheDirectory = Join-Path $cacheRoot $safeCacheKey
     $metadataPath = Join-Path $hiveCacheDirectory ('{0}-Ibis-Hive-Preparation.json' -f $safeCacheKey)
 
@@ -2279,7 +2279,7 @@ function Invoke-IbisWindowsRegistryHives {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'Registry-Hives'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     if (-not (Test-Path -LiteralPath $outputDirectory)) {
         New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
     }
@@ -2575,7 +2575,7 @@ function Invoke-IbisAmcache {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'Amcache'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $sourceHivePath = Get-IbisAmcacheHivePath -SourceRoot $SourceRoot
 
     $preparedHive = Invoke-IbisPrepareRegistryHiveFile `
@@ -2788,7 +2788,7 @@ function Invoke-IbisAppCompatCache {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'AppCompatCache-ShimCache'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     $preparedHive = Invoke-IbisPrepareRegistryHive `
         -ToolsRoot $ToolsRoot `
@@ -2932,7 +2932,7 @@ function Invoke-IbisPrefetch {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisPrefetchPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'Prefetch'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
         return [pscustomobject]@{
@@ -3351,7 +3351,7 @@ function Invoke-IbisNtfsMetadata {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'NTFS-Metadata'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     $mftPath = Find-IbisNtfsArtifactPath -SourceRoot $SourceRoot -ArtifactName '$MFT'
     $usnJournalPath = Find-IbisUsnJournalPath -SourceRoot $SourceRoot
@@ -3488,7 +3488,7 @@ function Invoke-IbisSrum {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $srumPath = Get-IbisSrumDatabasePath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'SRUM'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     $preparedSoftware = Invoke-IbisPrepareRegistryHive `
         -ToolsRoot $ToolsRoot `
@@ -3922,7 +3922,7 @@ function Invoke-IbisUserArtifacts {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'Users'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $profiles = @(Get-IbisUserProfile -SourceRoot $SourceRoot)
     if ($profiles.Count -eq 0) {
         return [pscustomobject]@{
@@ -4094,7 +4094,7 @@ function Invoke-IbisEvtxECmdEventLogs {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $outputPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EvtxECmd-EventLogs-Output.csv')
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
@@ -4308,7 +4308,7 @@ function Invoke-IbisDuckDbEventLogSummary {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $evtxCsvPath = Get-IbisEvtxECmdCsvPath -OutputRoot $OutputRoot -Hostname $safeHost
 
     if (-not (Test-Path -LiteralPath $evtxCsvPath -PathType Leaf)) {
@@ -4458,7 +4458,7 @@ function Invoke-IbisHayabusaEventLogs {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $hayabusaCsvPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-Output.csv')
     $hayabusaJsonlPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-SuperVerbose.jsonl')
 
@@ -4575,7 +4575,7 @@ function Invoke-IbisTakajoEventLogs {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $hayabusaJsonlPath = Get-IbisHayabusaJsonlPath -OutputRoot $OutputRoot -Hostname $safeHost
     $takajoOutputDirectory = Join-Path $outputDirectory 'Takajo'
 
@@ -4726,7 +4726,7 @@ function Invoke-IbisChainsawEventLogs {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $chainsawStagingDirectory = Join-Path $outputDirectory 'Chainsaw'
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
@@ -4844,7 +4844,7 @@ function Invoke-IbisUserAccessLogsSum {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisUserAccessLogPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'User Access Logs (SUM)'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
         return [pscustomobject]@{
@@ -4940,7 +4940,7 @@ function Invoke-IbisBrowsingHistoryView {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisBrowserHistoryUsersPath -SourceRoot $SourceRoot
     $outputDirectory = Join-Path $hostOutputRoot 'BrowsingHistoryView'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $outputPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'BrowsingHistoryView-All-Users.csv')
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
@@ -5062,7 +5062,7 @@ function Invoke-IbisForensicWebHistory {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'ForensicWebHistory'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $stagingDirectory = Join-Path $workingsDirectory 'ForensicWebHistory-Staging'
 
     if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
@@ -5140,7 +5140,7 @@ function Invoke-IbisParseUsbArtifacts {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'USB'
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     $logPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'ParseUSBs-Log.txt')
 
     if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
@@ -5461,7 +5461,7 @@ function Invoke-IbisSystemSummary {
     if (-not (Test-Path -LiteralPath $outputDirectory)) {
         New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
     }
-    $workingsDirectory = Join-Path $outputDirectory 'Workings'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
     if (-not (Test-Path -LiteralPath $workingsDirectory)) {
         New-Item -ItemType Directory -Path $workingsDirectory -Force | Out-Null
     }
@@ -5721,3 +5721,5 @@ Export-ModuleMember -Function Invoke-IbisExtractHostName
 Export-ModuleMember -Function Invoke-IbisSystemSummary
 Export-ModuleMember -Function New-IbisRunSummary
 Export-ModuleMember -Function Save-IbisRunSummary
+
+

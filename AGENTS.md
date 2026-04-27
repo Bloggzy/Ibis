@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.5.6`.
+Current version: `v0.5.7`.
 
 ## Build From Scratch Shape
 
@@ -82,7 +82,7 @@ Use hostname-based output names for analyst-facing files:
 HOSTNAME-Tool-Or-Module-Description.ext
 ```
 
-Put final outputs in the module folder or host root. Put helper files, stderr, rendered SQL, copied hives, staging artefacts, and troubleshooting summaries under `Workings` where practical.
+Put final outputs in the module folder or host root. Put helper files, stderr, rendered SQL, copied hives, staging artefacts, and troubleshooting summaries under `_Working` where practical.
 
 Normalise timestamp-prefixed tool outputs after execution. Current examples include PECmd, SrumECmd, SumECmd, user artefact tools, Forensic webhistory, and Chainsaw staged outputs.
 
@@ -190,7 +190,7 @@ Each module should:
 
 - Resolve source paths first.
 - Return `Skipped` without creating host output when the source artefact is absent.
-- Create output and `Workings` folders only when it has real work to do or a failure to record.
+- Create output and `_Working` folders only when it has real work to do or a failure to record.
 - Resolve the required tool by ID from tool definitions.
 - Return `Failed` and write summary JSON when the source exists but the tool is missing.
 - Capture stderr for failed external tools where practical.
@@ -202,7 +202,7 @@ Avoid stopping the whole run because one module failed.
 
 ## Module Notes
 
-- System Summary: RegRipper plugins; final text/JSON in host root; helper plugin output in `Workings`.
+- System Summary: RegRipper plugins; final text/JSON in host root; helper plugin output in `_Working`.
 - Velociraptor Results: locate nearby `Results` folder and copy it under host output.
 - Registry Hives: cache hives and logs, attempt dirty hive replay with `rla`, process cached copies.
 - Amcache: prepare `Amcache.hve`, run AmcacheParser and RegRipper variants.
@@ -226,7 +226,7 @@ Avoid stopping the whole run because one module failed.
 Use pre-1.0 semantic-style versioning while beta:
 
 - `v0.5.0` was the first rebuilt beta baseline.
-- Patch releases such as `v0.5.6` record incremental fixes, documentation refreshes, and small additions.
+- Patch releases such as `v0.5.7` record incremental fixes, documentation refreshes, and small additions.
 
 When changing behaviour, update:
 
@@ -278,3 +278,4 @@ Add tests for:
 - When using the old script as reference, extract intent, command patterns, and edge cases; do not preserve accidental complexity.
 - Prefer small, reviewable changes.
 - If a design choice affects analyst workflow, document the tradeoff before implementing it.
+

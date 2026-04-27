@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.5.6'
+        $config.version | Should Be '0.5.7'
     }
 
     It 'records release history in the changelog' {
@@ -826,7 +826,7 @@ Describe 'Ibis Windows Registry hives' {
             $result.Status | Should Be 'Failed'
             $result.PreparedHiveCount | Should Be 4
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\Workings\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\_Working\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -854,8 +854,8 @@ Describe 'Ibis Windows Registry hives' {
 
             $result.HostOutputRoot | Should Be $outputRoot
             $result.PreparedHiveCount | Should Be 4
-            Test-Path -LiteralPath (Join-Path $outputRoot 'Registry-Hives\Workings\Registry-Hives.json') | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'Registry-Hives\Workings\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'Registry-Hives\_Working\Registry-Hives.json') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'Registry-Hives\_Working\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'HOST') | Should Be $false
         }
         finally {
@@ -902,8 +902,8 @@ Describe 'Ibis Amcache' {
             $result.CacheGroup | Should Be 'Amcache'
             $result.CacheKey | Should Be 'Amcache'
             $result.TransactionLogCount | Should Be 1
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\Workings\Prepared-Hives\Amcache\Amcache.hve') | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\Workings\Prepared-Hives\Amcache\Amcache.hve.LOG1') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\_Working\Prepared-Hives\Amcache\Amcache.hve') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\_Working\Prepared-Hives\Amcache\Amcache.hve.LOG1') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -955,7 +955,7 @@ Describe 'Ibis Amcache' {
             $result.ModuleId | Should Be 'amcache'
             $result.Status | Should Be 'Failed'
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\Workings\Prepared-Hives\Amcache\Amcache.hve') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Amcache\_Working\Prepared-Hives\Amcache\Amcache.hve') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -1021,7 +1021,7 @@ Describe 'Ibis AppCompatCache, Prefetch, and NTFS metadata' {
             $result.ModuleId | Should Be 'appcompatcache'
             $result.Status | Should Be 'Failed'
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\Workings\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\_Working\Prepared-Hives\SYSTEM\SYSTEM') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -1215,7 +1215,7 @@ Describe 'Ibis AppCompatCache, Prefetch, and NTFS metadata' {
             $result.ModuleId | Should Be 'ntfs-metadata'
             $result.Status | Should Be 'Failed'
             $result.HostOutputRoot | Should Be $outputRoot
-            Test-Path -LiteralPath (Join-Path $outputRoot 'NTFS-Metadata\Workings\NTFS-Metadata.json') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'NTFS-Metadata\_Working\NTFS-Metadata.json') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'HOST') | Should Be $false
         }
         finally {
@@ -1327,7 +1327,7 @@ Describe 'Ibis SRUM and user artefacts' {
             $result.ModuleId | Should Be 'srum'
             $result.Status | Should Be 'Failed'
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\Workings\Prepared-Hives\SOFTWARE\SOFTWARE') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Registry-Hives\_Working\Prepared-Hives\SOFTWARE\SOFTWARE') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -1456,7 +1456,7 @@ Describe 'Ibis SRUM and user artefacts' {
             $result.Status | Should Be 'Failed'
             $result.UserCount | Should Be 1
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Workings\Prepared-Hives\Alice-NTUSER\NTUSER.dat') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\_Working\Prepared-Hives\Alice-NTUSER\NTUSER.dat') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Alice\PSReadLine\TESTHOST-Alice-PSReadLine-ConsoleHost_history.txt') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Alice\PSReadLine\PSReadLine\ConsoleHost_history.txt') | Should Be $false
         }
@@ -2078,3 +2078,4 @@ Describe 'Ibis Velociraptor Results copy-out' {
         }
     }
 }
+
