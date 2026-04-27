@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.5.7`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.5.8`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 

@@ -1163,6 +1163,13 @@ function Show-IbisGui {
     $infoTitleLabel.Size = New-Object System.Drawing.Size(620, 34)
     $infoTab.Controls.Add($infoTitleLabel)
 
+    $infoTaglineLabel = New-Object System.Windows.Forms.Label
+    $infoTaglineLabel.Text = 'A bin chicken for Windows forensic artefacts.'
+    $infoTaglineLabel.Font = New-Object System.Drawing.Font($infoTaglineLabel.Font.FontFamily, 10, [System.Drawing.FontStyle]::Italic)
+    $infoTaglineLabel.Location = New-Object System.Drawing.Point(20, 54)
+    $infoTaglineLabel.Size = New-Object System.Drawing.Size(620, 24)
+    $infoTab.Controls.Add($infoTaglineLabel)
+
     $infoLogoPictureBox = New-Object System.Windows.Forms.PictureBox
     $infoLogoPictureBox.Location = New-Object System.Drawing.Point(664, 16)
     $infoLogoPictureBox.Size = New-Object System.Drawing.Size(78, 78)

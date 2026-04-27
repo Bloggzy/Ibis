@@ -1,6 +1,6 @@
 # Ibis
 
-Ibis is a Windows PowerShell DFIR helper for analyst workstations. It can download and prepare a set of common forensic tools, then run selected first-pass parsing modules against a Windows evidence source such as a mounted disk image, Velociraptor collection, KAPE collection, or similar triage export.
+Ibis is a Windows PowerShell DFIR helper for analyst workstations: a bin chicken for Windows forensic artefacts. It can download and prepare a set of common forensic tools, then run selected first-pass parsing modules against a Windows evidence source such as a mounted disk image, Velociraptor collection, KAPE collection, or similar triage export.
 
 Ibis is intended to speed up the early stages of analysis by producing a consistent, organised output folder. It does not replace analyst review, validation, or deeper case-specific examination.
 
@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.5.7`
+Current version: `v0.5.8`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -249,5 +249,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.5.7`, both test runs pass with `115` tests.
+As of `v0.5.8`, both test runs pass with `115` tests.
 

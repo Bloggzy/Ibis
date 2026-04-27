@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.5.7`.
+Current version: `v0.5.8`.
 
 ## Build From Scratch Shape
 
@@ -226,7 +226,7 @@ Avoid stopping the whole run because one module failed.
 Use pre-1.0 semantic-style versioning while beta:
 
 - `v0.5.0` was the first rebuilt beta baseline.
-- Patch releases such as `v0.5.7` record incremental fixes, documentation refreshes, and small additions.
+- Patch releases such as `v0.5.8` record incremental fixes, documentation refreshes, and small additions.
 
 When changing behaviour, update:
 

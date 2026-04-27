@@ -4,6 +4,10 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.5.8 - 2026-04-27
+
+- Added the Info tab tagline: "A bin chicken for Windows forensic artefacts."
+
 ## v0.5.7 - 2026-04-27
 
 - Renamed module helper folders from `Workings` to `_Working` so transparency/audit folders sort to the top and stand out as special output.
