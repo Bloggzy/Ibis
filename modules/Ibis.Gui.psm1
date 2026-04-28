@@ -207,6 +207,132 @@ function Add-IbisCommandLineHints {
     }
 }
 
+function Get-IbisFailedToolResult {
+    [CmdletBinding()]
+    param(
+        [object]$InputObject
+    )
+
+    $failed = New-Object System.Collections.Generic.List[object]
+    $visited = New-Object 'System.Collections.Generic.HashSet[int]'
+
+    $visit = {
+        param($Value)
+
+        if ($null -eq $Value -or $Value -is [string]) {
+            return
+        }
+
+        $valueType = $Value.GetType()
+        if ($valueType.IsPrimitive -or $Value -is [decimal] -or $Value -is [datetime] -or $Value -is [guid] -or $Value -is [enum]) {
+            return
+        }
+
+        if (-not $valueType.IsValueType) {
+            $hash = [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Value)
+            if ($visited.Contains($hash)) {
+                return
+            }
+            [void]$visited.Add($hash)
+        }
+
+        if ($Value -is [System.Collections.IDictionary]) {
+            if ($Value.Contains('Status') -and [string]$Value['Status'] -eq 'Failed') {
+                $failed.Add([pscustomobject]@{
+                    ToolId = [string]$Value['ToolId']
+                    Message = [string]$Value['Message']
+                    Status = [string]$Value['Status']
+                })
+            }
+            foreach ($key in $Value.Keys) {
+                & $visit $Value[$key]
+            }
+            return
+        }
+
+        if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+            foreach ($item in $Value) {
+                & $visit $item
+            }
+            return
+        }
+
+        $properties = @($Value.PSObject.Properties)
+        $statusProperty = $properties | Where-Object { $_.Name -eq 'Status' } | Select-Object -First 1
+        if ($statusProperty -and [string]$statusProperty.Value -eq 'Failed') {
+            $toolIdProperty = $properties | Where-Object { $_.Name -eq 'ToolId' } | Select-Object -First 1
+            $messageProperty = $properties | Where-Object { $_.Name -eq 'Message' } | Select-Object -First 1
+            if ($toolIdProperty) {
+                $failed.Add([pscustomobject]@{
+                    ToolId = [string]$toolIdProperty.Value
+                    Message = [string]$messageProperty.Value
+                    Status = [string]$statusProperty.Value
+                })
+            }
+        }
+
+        foreach ($property in $properties) {
+            & $visit $property.Value
+        }
+    }
+
+    & $visit $InputObject
+    $failed.ToArray()
+}
+
+function Format-IbisProcessingRunSummary {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$ModuleResults
+    )
+
+    $moduleResults = @($ModuleResults)
+    $failedModules = @($moduleResults | Where-Object { $_.ErrorMessage -or ($_.Result -and [string]$_.Result.Status -eq 'Failed') })
+    $skippedModules = @($moduleResults | Where-Object { $_.Result -and [string]$_.Result.Status -eq 'Skipped' })
+    $workedModules = @($moduleResults | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -ne 'Failed' -and [string]$_.Result.Status -ne 'Skipped' })
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("Processing summary: $($workedModules.Count) worked, $($failedModules.Count) failed, $($skippedModules.Count) skipped.")
+
+    if ($failedModules.Count -eq 0) {
+        $lines.Add('No module/tool failures were reported.')
+        return $lines.ToArray()
+    }
+
+    $lines.Add('Failed items:')
+    foreach ($moduleResult in $failedModules) {
+        $moduleName = [string]$moduleResult.ModuleName
+        if ([string]::IsNullOrWhiteSpace($moduleName)) {
+            $moduleName = [string]$moduleResult.ModuleId
+        }
+
+        $message = [string]$moduleResult.ErrorMessage
+        if ([string]::IsNullOrWhiteSpace($message) -and $moduleResult.Result) {
+            $message = [string]$moduleResult.Result.Message
+        }
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = 'No failure message was provided.'
+        }
+
+        $lines.Add("- ${moduleName}: $message")
+
+        foreach ($toolFailure in @(Get-IbisFailedToolResult -InputObject $moduleResult.Result)) {
+            $toolName = [string]$toolFailure.ToolId
+            if ([string]::IsNullOrWhiteSpace($toolName)) {
+                continue
+            }
+            $toolMessage = [string]$toolFailure.Message
+            if ([string]::IsNullOrWhiteSpace($toolMessage)) {
+                $toolMessage = 'Tool reported Failed.'
+            }
+            $lines.Add("  Tool ${toolName}: $toolMessage")
+        }
+    }
+
+    $lines.ToArray()
+}
+
 function Get-IbisFileSystemSnapshot {
     [CmdletBinding()]
     param(
@@ -2669,6 +2795,10 @@ function Show-IbisGui {
                 }
             }
 
+            foreach ($summaryLine in @(Format-IbisProcessingRunSummary -ModuleResults $moduleResults)) {
+                Add-IbisLogLine -LogTextBox $logTextBox -Message $summaryLine
+            }
+
             if ($processingState.CancelRequested) {
                 $statusLabel.Text = 'Processing module run cancelled'
                 $runProgressLabel.Text = 'Run cancelled'
@@ -3366,6 +3496,8 @@ function Show-IbisGui {
 
 Export-ModuleMember -Function Show-IbisGui
 Export-ModuleMember -Function ConvertTo-IbisGuiDisplayText
+Export-ModuleMember -Function Get-IbisFailedToolResult
+Export-ModuleMember -Function Format-IbisProcessingRunSummary
 Export-ModuleMember -Function Start-IbisHayabusaRulesUpdateRunspace
 Export-ModuleMember -Function Start-IbisProcessingRunspace
 Export-ModuleMember -Function Stop-IbisToolInstallRunspace

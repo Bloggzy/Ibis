@@ -4,6 +4,11 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.1 - 2026-04-28
+
+- Added an end-of-run processing summary that reports worked, failed, and skipped module counts.
+- Failed modules and nested failed tool results are now listed at the end of the run so analysts know what to revisit in the logs.
+
 ## v0.6.0 - 2026-04-28
 
 - Added a project versioning note that patch versions roll from `.9` to the next minor version rather than using `.10`.

@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.0'
+        $config.version | Should Be '0.6.1'
     }
 
     It 'records release history in the changelog' {
@@ -81,6 +81,51 @@ Describe 'Ibis core configuration' {
         $status.MicrosoftUrl | Should Match 'latest-supported-vc-redist'
         [string]::IsNullOrWhiteSpace([string]$status.Message) | Should Be $false
         $status.PSObject.Properties.Name -contains 'Present' | Should Be $true
+    }
+
+    It 'formats processing run summaries with failed module details' {
+        $moduleResults = @(
+            [pscustomobject]@{
+                ModuleId = 'amcache'
+                ModuleName = 'Amcache'
+                ErrorMessage = $null
+                Result = [pscustomobject]@{
+                    Status = 'Completed'
+                    Message = 'Amcache completed.'
+                }
+            },
+            [pscustomobject]@{
+                ModuleId = 'srum'
+                ModuleName = 'SRUM'
+                ErrorMessage = $null
+                Result = [pscustomobject]@{
+                    Status = 'Failed'
+                    Message = 'SrumECmd failed.'
+                    ToolResults = @(
+                        [pscustomobject]@{
+                            ToolId = 'zimmerman-srumecmd'
+                            Status = 'Failed'
+                            Message = 'SrumECmd is missing.'
+                        }
+                    )
+                }
+            },
+            [pscustomobject]@{
+                ModuleId = 'prefetch'
+                ModuleName = 'Prefetch'
+                ErrorMessage = $null
+                Result = [pscustomobject]@{
+                    Status = 'Skipped'
+                    Message = 'Prefetch folder was not found.'
+                }
+            }
+        )
+
+        $summary = @(Format-IbisProcessingRunSummary -ModuleResults $moduleResults)
+
+        $summary[0] | Should Be 'Processing summary: 1 worked, 1 failed, 1 skipped.'
+        ($summary -join "`n") | Should Match 'SRUM: SrumECmd failed'
+        ($summary -join "`n") | Should Match 'Tool zimmerman-srumecmd: SrumECmd is missing'
     }
 }
 
