@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.5.8'
+        $config.version | Should Be '0.5.9'
     }
 
     It 'records release history in the changelog' {
@@ -377,10 +377,12 @@ Describe 'Ibis staged tool installs' {
 
         try {
             $workspace = New-IbisToolInstallWorkspace -ToolsRoot $tempRoot -ToolDefinition $tool
-            $expectedPrefix = Join-Path $tempRoot 'Chainsaw\_ibis-staging'
+            $expectedPrefix = Join-Path $tempRoot 'Chainsaw\_s'
             $workspace.Root.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase) | Should Be $true
             Test-Path -LiteralPath $workspace.DownloadDirectory | Should Be $true
             Test-Path -LiteralPath $workspace.ExtractDirectory | Should Be $true
+            (Split-Path -Path $workspace.DownloadDirectory -Leaf) | Should Be 'd'
+            (Split-Path -Path $workspace.ExtractDirectory -Leaf) | Should Be 'x'
         }
         finally {
             if (Test-Path -LiteralPath $tempRoot) {

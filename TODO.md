@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.5.8`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.5.9`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -27,7 +27,8 @@ This roadmap reflects the current state as of `v0.5.8`. The major first-pass pro
 ## Completed GUI Features
 
 - [x] Info tab with overview, disclaimer, licence text, and embedded Ibis logo.
-- [x] Setup tab with tools folder selector.
+- [x] Setup tools tab with tools folder selector.
+- [x] Open tools folder button.
 - [x] Automatic initial tool check.
 - [x] Recheck tools button.
 - [x] Missing tool guidance.
@@ -60,9 +61,12 @@ This roadmap reflects the current state as of `v0.5.8`. The major first-pass pro
 - [x] GitHub latest release discovery for supported tools.
 - [x] ZIP extraction.
 - [x] `.NET` ZIP fallback when `Expand-Archive` fails.
+- [x] 7-Zip ZIP fallback after `Expand-Archive` and .NET extraction fail.
 - [x] File download installs.
 - [x] Staging under install directory for Defender-sensitive tools.
+- [x] Short Defender-sensitive staging paths to reduce path length pressure.
 - [x] Avoid extracting Defender-sensitive tools under `%TEMP%`.
+- [x] Admin-only Windows long path support enable/disable controls.
 - [x] Partial install detection.
 - [x] Backup conflicting staged items before publish.
 - [x] Avoid backing up unrelated tools in shared EZTools folder.

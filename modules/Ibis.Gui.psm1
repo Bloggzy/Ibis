@@ -1251,7 +1251,7 @@ function Show-IbisGui {
     $aboutTab.Controls.Add($changelogTextBox)
 
     $setupTab = New-Object System.Windows.Forms.TabPage
-    $setupTab.Text = 'Setup'
+    $setupTab.Text = 'Setup tools'
     $tabs.TabPages.Add($setupTab)
 
     $toolsLabel = New-Object System.Windows.Forms.Label
@@ -1262,20 +1262,26 @@ function Show-IbisGui {
 
     $toolsTextBox = New-Object System.Windows.Forms.TextBox
     $toolsTextBox.Location = New-Object System.Drawing.Point(12, 40)
-    $toolsTextBox.Width = 620
+    $toolsTextBox.Width = 500
     $toolsTextBox.Text = $config.defaultToolsRoot
     $setupTab.Controls.Add($toolsTextBox)
 
     $toolsBrowseButton = New-Object System.Windows.Forms.Button
     $toolsBrowseButton.Text = 'Browse'
-    $toolsBrowseButton.Location = New-Object System.Drawing.Point(646, 38)
-    $toolsBrowseButton.Width = 110
+    $toolsBrowseButton.Location = New-Object System.Drawing.Point(526, 38)
+    $toolsBrowseButton.Width = 82
     $setupTab.Controls.Add($toolsBrowseButton)
+
+    $openToolsFolderButton = New-Object System.Windows.Forms.Button
+    $openToolsFolderButton.Text = 'Open tools folder'
+    $openToolsFolderButton.Location = New-Object System.Drawing.Point(620, 38)
+    $openToolsFolderButton.Width = 136
+    $setupTab.Controls.Add($openToolsFolderButton)
 
     $toolActionsGroup = New-Object System.Windows.Forms.GroupBox
     $toolActionsGroup.Text = 'Tool management'
     $toolActionsGroup.Location = New-Object System.Drawing.Point(12, 76)
-    $toolActionsGroup.Size = New-Object System.Drawing.Size(368, 112)
+    $toolActionsGroup.Size = New-Object System.Drawing.Size(368, 148)
     $setupTab.Controls.Add($toolActionsGroup)
 
     $checkToolsButton = New-Object System.Windows.Forms.Button
@@ -1301,6 +1307,29 @@ function Show-IbisGui {
     $updateHayabusaRulesButton.Location = New-Object System.Drawing.Point(136, 68)
     $updateHayabusaRulesButton.Width = 214
     $toolActionsGroup.Controls.Add($updateHayabusaRulesButton)
+
+    $longPathsLabel = New-Object System.Windows.Forms.Label
+    $longPathsLabel.Text = 'Long paths'
+    $longPathsLabel.Location = New-Object System.Drawing.Point(12, 110)
+    $longPathsLabel.Size = New-Object System.Drawing.Size(82, 20)
+    $toolActionsGroup.Controls.Add($longPathsLabel)
+
+    $enableLongPathsButton = New-Object System.Windows.Forms.Button
+    $enableLongPathsButton.Text = 'Enable'
+    $enableLongPathsButton.Location = New-Object System.Drawing.Point(100, 104)
+    $enableLongPathsButton.Width = 82
+    $toolActionsGroup.Controls.Add($enableLongPathsButton)
+
+    $disableLongPathsButton = New-Object System.Windows.Forms.Button
+    $disableLongPathsButton.Text = 'Disable'
+    $disableLongPathsButton.Location = New-Object System.Drawing.Point(192, 104)
+    $disableLongPathsButton.Width = 82
+    $toolActionsGroup.Controls.Add($disableLongPathsButton)
+
+    $longPathsStatusLabel = New-Object System.Windows.Forms.Label
+    $longPathsStatusLabel.Location = New-Object System.Drawing.Point(284, 109)
+    $longPathsStatusLabel.Size = New-Object System.Drawing.Size(70, 20)
+    $toolActionsGroup.Controls.Add($longPathsStatusLabel)
 
     $defenderActionsGroup = New-Object System.Windows.Forms.GroupBox
     $defenderActionsGroup.Text = 'Microsoft Defender exclusions'
@@ -1333,8 +1362,8 @@ function Show-IbisGui {
     $defenderActionsGroup.Controls.Add($removeDefenderExclusionsButton)
 
     $toolList = New-Object System.Windows.Forms.ListView
-    $toolList.Location = New-Object System.Drawing.Point(12, 188)
-    $toolList.Size = New-Object System.Drawing.Size(744, 198)
+    $toolList.Location = New-Object System.Drawing.Point(12, 236)
+    $toolList.Size = New-Object System.Drawing.Size(744, 150)
     $toolList.View = 'Details'
     $toolList.FullRowSelect = $true
     $toolList.GridLines = $true
@@ -1755,11 +1784,31 @@ function Show-IbisGui {
         }
     }
 
+    $updateToolsFolderButtonState = {
+        $openToolsFolderButton.Enabled = (-not [string]::IsNullOrWhiteSpace($toolsTextBox.Text) -and (Test-Path -LiteralPath $toolsTextBox.Text -PathType Container))
+    }
+
+    $updateLongPathsControls = {
+        $isAdministrator = Test-IbisIsAdministrator
+        $longPathsEnabled = Get-IbisLongPathsEnabled
+        $enableLongPathsButton.Enabled = ($isAdministrator -and -not $longPathsEnabled)
+        $disableLongPathsButton.Enabled = ($isAdministrator -and $longPathsEnabled)
+        if ($longPathsEnabled) {
+            $longPathsStatusLabel.Text = 'Enabled'
+            $longPathsStatusLabel.ForeColor = [System.Drawing.Color]::DarkGreen
+        }
+        else {
+            $longPathsStatusLabel.Text = 'Disabled'
+            $longPathsStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+        }
+    }
+
     $setDefenderControlsForAdmin = {
         $isAdministrator = Test-IbisIsAdministrator
         $checkDefenderExclusionsButton.Enabled = $isAdministrator
         $addDefenderExclusionsButton.Enabled = $isAdministrator
         $removeDefenderExclusionsButton.Enabled = $isAdministrator
+        & $updateLongPathsControls
         if ($isAdministrator) {
             $defenderAdminLabel.Text = 'Administrator permissions detected.'
             $defenderAdminLabel.ForeColor = [System.Drawing.Color]::DarkGreen
@@ -1771,6 +1820,7 @@ function Show-IbisGui {
     }
 
     & $setDefenderControlsForAdmin
+    & $updateToolsFolderButtonState
 
     $updateModuleDependencies = {
         if ($moduleCheckboxById.ContainsKey('hayabusa') -and $moduleCheckboxById.ContainsKey('takajo')) {
@@ -1823,6 +1873,7 @@ function Show-IbisGui {
     }
 
     $refreshToolStatusList = {
+        & $updateToolsFolderButtonState
         $toolList.Items.Clear()
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
         foreach ($status in $statuses) {
@@ -1957,8 +2008,54 @@ function Show-IbisGui {
         $folderDialog.SelectedPath = $toolsTextBox.Text
         if ($folderDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $toolsTextBox.Text = $folderDialog.SelectedPath
+            & $updateToolsFolderButtonState
             & $saveConfigPaths -Reason 'tools folder selection'
             Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Tools folder selected: $($toolsTextBox.Text)"
+        }
+    })
+
+    $openToolsFolderButton.Add_Click({
+        if (Test-Path -LiteralPath $toolsTextBox.Text -PathType Container) {
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Opening tools folder: $($toolsTextBox.Text)"
+            Start-Process -FilePath 'explorer.exe' -ArgumentList @($toolsTextBox.Text)
+        }
+    })
+
+    $toolsTextBox.Add_TextChanged({
+        & $updateToolsFolderButtonState
+    })
+
+    $enableLongPathsButton.Add_Click({
+        try {
+            $result = Set-IbisLongPathsEnabled -Enabled $true
+            & $updateLongPathsControls
+            $message = "Windows long path support: $($result.Message)"
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $message -StripAnsi
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $message
+            $statusLabel.Text = 'Windows long path support enabled'
+        }
+        catch {
+            $message = "Unable to enable Windows long path support: $($_.Exception.Message)"
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $message -StripAnsi
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message $message
+            $statusLabel.Text = 'Long path update failed'
+        }
+    })
+
+    $disableLongPathsButton.Add_Click({
+        try {
+            $result = Set-IbisLongPathsEnabled -Enabled $false
+            & $updateLongPathsControls
+            $message = "Windows long path support: $($result.Message)"
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $message -StripAnsi
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $message
+            $statusLabel.Text = 'Windows long path support disabled'
+        }
+        catch {
+            $message = "Unable to disable Windows long path support: $($_.Exception.Message)"
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $message -StripAnsi
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message $message
+            $statusLabel.Text = 'Long path update failed'
         }
     })
 
@@ -2276,6 +2373,7 @@ function Show-IbisGui {
             & $setDefenderControlsForAdmin
             $toolsBrowseButton.Enabled = $true
             $toolsTextBox.Enabled = $true
+            & $updateToolsFolderButtonState
         }
     })
 
@@ -2308,6 +2406,7 @@ function Show-IbisGui {
         $addDefenderExclusionsButton.Enabled = $false
         $removeDefenderExclusionsButton.Enabled = $false
         $toolsBrowseButton.Enabled = $false
+        $openToolsFolderButton.Enabled = $false
         $toolsTextBox.Enabled = $false
         $toolGuidanceTextBox.Clear()
         Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Starting background download/install for $($missing.Count) missing tools...`r`n" -StripAnsi
@@ -2348,6 +2447,7 @@ function Show-IbisGui {
             & $setDefenderControlsForAdmin
             $toolsBrowseButton.Enabled = $true
             $toolsTextBox.Enabled = $true
+            & $updateToolsFolderButtonState
         }
     })
 
@@ -2417,6 +2517,7 @@ function Show-IbisGui {
             & $setDefenderControlsForAdmin
             $toolsBrowseButton.Enabled = $true
             $toolsTextBox.Enabled = $true
+            & $updateToolsFolderButtonState
         }
     })
 
@@ -2450,6 +2551,7 @@ function Show-IbisGui {
         $addDefenderExclusionsButton.Enabled = $false
         $removeDefenderExclusionsButton.Enabled = $false
         $toolsBrowseButton.Enabled = $false
+        $openToolsFolderButton.Enabled = $false
         $toolsTextBox.Enabled = $false
         $toolGuidanceTextBox.Clear()
         Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Starting Hayabusa rules update...`r`n" -StripAnsi
@@ -2477,6 +2579,7 @@ function Show-IbisGui {
             & $setDefenderControlsForAdmin
             $toolsBrowseButton.Enabled = $true
             $toolsTextBox.Enabled = $true
+            & $updateToolsFolderButtonState
         }
     })
 

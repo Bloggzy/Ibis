@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.5.8`
+Current version: `v0.5.9`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -32,7 +32,7 @@ From the project folder:
 
 Typical workflow:
 
-1. Open the `Setup` tab and confirm the tools folder, normally `C:\DFIR\Tools`.
+1. Open the `Setup tools` tab and confirm the tools folder, normally `C:\DFIR\Tools`.
 2. Let Ibis check installed tools automatically, then use `Download Missing Tools` or `Guidance` as needed.
 3. If running as Administrator, check/add Defender exclusions for tools that commonly trigger false positives.
 4. Open the `Run tools` tab.
@@ -46,7 +46,7 @@ Typical workflow:
 ## GUI Tabs
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
-- `Setup`: tools folder, tool checks, downloads, guidance, Hayabusa rule updates, and Defender exclusions.
+- `Setup tools`: tools folder, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, and Windows long path support controls.
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel-before-next-module.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
@@ -151,7 +151,7 @@ Optional sub-module of Windows Event Logs. It consumes EvtxECmd CSV output and r
 
 ### Hayabusa
 
-Runs Hayabusa against Windows event logs and produces a super-verbose JSONL timeline. The `Setup` tab can also run Hayabusa's rule update workflow.
+Runs Hayabusa against Windows event logs and produces a super-verbose JSONL timeline. The `Setup tools` tab can also run Hayabusa's rule update workflow.
 
 ### Takajo
 
@@ -193,11 +193,13 @@ Current tool set includes:
 - forensic-webhistory.
 - parseusbs.
 
-Ibis supports direct downloads and GitHub latest-release downloads where configured. Installs are staged before publishing to avoid extracting over partial installs. Defender-sensitive tools are staged under their install directory rather than `%TEMP%` where possible.
+Ibis supports direct downloads and GitHub latest-release downloads where configured. Installs are staged before publishing to avoid extracting over partial installs. Defender-sensitive tools are staged under their install directory rather than `%TEMP%` where possible, using short `_s\<id>\d` and `_s\<id>\x` staging paths to reduce path-length pressure.
+
+ZIP extraction tries PowerShell `Expand-Archive`, then a .NET fallback, then 7-Zip if `7z.exe` or `7za.exe` is available. The `Setup tools` tab also includes admin-only controls for the Windows `LongPathsEnabled` registry setting, which may require a restart before every process observes the change.
 
 ## Defender Exclusions
 
-Tools and rule sets such as Chainsaw, Hayabusa, and Takajo may trigger Defender false positives. The `Setup` tab can check, add, and remove recommended folder exclusions based on tool metadata.
+Tools and rule sets such as Chainsaw, Hayabusa, and Takajo may trigger Defender false positives. The `Setup tools` tab can check, add, and remove recommended folder exclusions based on tool metadata.
 
 Standard-user Defender checks may be incomplete. Administrator rights are required to add or remove exclusions.
 
@@ -249,5 +251,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.5.8`, both test runs pass with `115` tests.
+As of `v0.5.9`, both test runs pass with `115` tests.
 

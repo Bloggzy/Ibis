@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.5.8`.
+Current version: `v0.5.9`.
 
 ## Build From Scratch Shape
 
@@ -133,9 +133,9 @@ Use staged installs. Do not extract directly over an existing install.
 
 For shared install directories such as `EZTools\net9`, back up only conflicting staged items, not the whole shared folder.
 
-Prefer staging under the final install directory for Defender-sensitive tools. Chainsaw, Hayabusa, Takajo, and rule-heavy archives can trigger Defender if extracted under `%TEMP%`.
+Prefer staging under the final install directory for Defender-sensitive tools. Chainsaw, Hayabusa, Takajo, and rule-heavy archives can trigger Defender if extracted under `%TEMP%`. Use short staging paths such as `_s\<id>\d` and `_s\<id>\x` to reduce long-path extraction failures.
 
-Support `.NET` ZIP extraction fallback because `Expand-Archive` can fail when the local `Microsoft.PowerShell.Archive` resources are damaged.
+Support `.NET` ZIP extraction fallback because `Expand-Archive` can fail when the local `Microsoft.PowerShell.Archive` resources are damaged. If both PowerShell and .NET extraction fail, try 7-Zip when available.
 
 Check for partial installs. If files exist but the expected executable is missing, report `Install Incomplete`.
 
@@ -162,7 +162,7 @@ Important behaviours:
 Current tab order:
 
 1. `Info`
-2. `Setup`
+2. `Setup tools`
 3. `Run tools`
 4. `Settings`
 5. `Logs`
@@ -170,7 +170,9 @@ Current tab order:
 
 GUI behaviour:
 
-- Auto-check tools when the Setup tab/form opens.
+- Auto-check tools when the Setup tools tab/form opens.
+- Include an Open tools folder button that is enabled only when the folder exists.
+- Include admin-only Windows long path support enable/disable controls.
 - Tool management buttons include `Recheck Tools`, `Download Missing Tools`, `Guidance`, and `Update Hayabusa Rules`.
 - Defender controls include check/add/remove exclusions and admin-aware enablement.
 - Run tools groups source, output, hostname, and processing modules.
@@ -213,7 +215,7 @@ Avoid stopping the whole run because one module failed.
 - User Artefacts: process all profiles, including default/system profiles; avoid duplicate folder nesting such as `PSReadLine\PSReadLine`.
 - Event Logs: run EvtxECmd.
 - DuckDB Event Summaries: sub-module of EvtxECmd using editable SQL templates.
-- Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup.
+- Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup tools.
 - Takajo: consume Hayabusa JSONL; run `automagic` and stack commands; back up output folder first.
 - Chainsaw: process event logs and normalise staged output.
 - UAL/SUM: run SumECmd against `Windows\System32\LogFiles\Sum`; rename timestamped output.
@@ -226,7 +228,7 @@ Avoid stopping the whole run because one module failed.
 Use pre-1.0 semantic-style versioning while beta:
 
 - `v0.5.0` was the first rebuilt beta baseline.
-- Patch releases such as `v0.5.8` record incremental fixes, documentation refreshes, and small additions.
+- Patch releases such as `v0.5.9` record incremental fixes, documentation refreshes, and small additions.
 
 When changing behaviour, update:
 

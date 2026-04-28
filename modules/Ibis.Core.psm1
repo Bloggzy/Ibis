@@ -648,6 +648,58 @@ function Invoke-IbisDownloadFile {
     }
 }
 
+function Get-IbisSevenZipPath {
+    [CmdletBinding()]
+    param()
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles})) {
+        $candidates += (Join-Path ${env:ProgramFiles} '7-Zip\7z.exe')
+    }
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe')
+    }
+    foreach ($commandName in @('7z.exe', '7za.exe')) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command) {
+            $candidates += $command.Source
+        }
+    }
+
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    $null
+}
+
+function Expand-IbisArchiveWithSevenZip {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LiteralPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    $sevenZipPath = Get-IbisSevenZipPath
+    if ([string]::IsNullOrWhiteSpace($sevenZipPath)) {
+        throw '7-Zip fallback was not available. Install 7-Zip or enable Windows long paths, then retry.'
+    }
+
+    $result = Invoke-IbisProcessCapture `
+        -FilePath $sevenZipPath `
+        -ArgumentList @('x', '-y', "-o$DestinationPath", $LiteralPath) `
+        -WorkingDirectory (Split-Path -Path $sevenZipPath -Parent)
+
+    if ($result.ExitCode -ne 0) {
+        throw "7-Zip fallback failed with exit code $($result.ExitCode). $($result.StandardError)"
+    }
+}
+
 function Expand-IbisArchive {
     [CmdletBinding()]
     param(
@@ -671,8 +723,47 @@ function Expand-IbisArchive {
             return
         }
         catch {
-            throw "Unable to extract ZIP archive. Expand-Archive failed with: $archiveError. .NET fallback failed with: $($_.Exception.Message)"
+            $dotNetError = $_.Exception.Message
+            try {
+                Expand-IbisArchiveWithSevenZip -LiteralPath $LiteralPath -DestinationPath $DestinationPath
+                return
+            }
+            catch {
+                throw "Unable to extract ZIP archive. Expand-Archive failed with: $archiveError. .NET fallback failed with: $dotNetError. 7-Zip fallback failed with: $($_.Exception.Message)"
+            }
         }
+    }
+}
+
+function Get-IbisLongPathsEnabled {
+    [CmdletBinding()]
+    param()
+
+    try {
+        $value = Get-ItemPropertyValue -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -ErrorAction Stop
+        [bool]([int]$value -eq 1)
+    }
+    catch {
+        $false
+    }
+}
+
+function Set-IbisLongPathsEnabled {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Enabled
+    )
+
+    if ($PSCmdlet.ShouldProcess('HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled', "Set to $([int]$Enabled)")) {
+        New-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -PropertyType DWord -Value ([int]$Enabled) -Force -ErrorAction Stop | Out-Null
+    }
+
+    [pscustomobject]@{
+        Enabled = (Get-IbisLongPathsEnabled)
+        Requested = $Enabled
+        IsAdministrator = (Test-IbisIsAdministrator)
+        Message = if ($Enabled) { 'Windows long path support enabled. A restart may be required before all processes use the setting.' } else { 'Windows long path support disabled. A restart may be required before all processes use the setting.' }
     }
 }
 
@@ -687,20 +778,21 @@ function New-IbisToolInstallWorkspace {
     )
 
     $id = [System.Guid]::NewGuid().ToString()
+    $shortId = $id.Substring(0, 8)
     $installDirectory = Get-IbisToolInstallDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
 
     if ($ToolDefinition.defenderExclusionRecommended -eq $true) {
         if (-not (Test-Path -LiteralPath $installDirectory)) {
             New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
         }
-        $workspaceRoot = Join-Path (Join-Path $installDirectory '_ibis-staging') $id
+        $workspaceRoot = Join-Path (Join-Path $installDirectory '_s') $shortId
     }
     else {
         $workspaceRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('IbisToolInstall-' + $id)
     }
 
-    $downloadDirectory = Join-Path $workspaceRoot 'download'
-    $extractDirectory = Join-Path $workspaceRoot 'extract'
+    $downloadDirectory = Join-Path $workspaceRoot 'd'
+    $extractDirectory = Join-Path $workspaceRoot 'x'
     New-Item -ItemType Directory -Path $downloadDirectory -Force | Out-Null
     New-Item -ItemType Directory -Path $extractDirectory -Force | Out-Null
 
@@ -870,7 +962,7 @@ function Test-IbisToolInstallState {
 
     if (Test-Path -LiteralPath $installDirectory -PathType Container) {
         $items = @(Get-ChildItem -LiteralPath $installDirectory -Force | Where-Object {
-            $_.Name -ne '_ibis-staging' -and $_.Name -ne '_ibis-backup'
+            $_.Name -ne '_ibis-staging' -and $_.Name -ne '_s' -and $_.Name -ne '_ibis-backup'
         })
         if ((Resolve-IbisComparablePath -Path $installDirectory) -eq (Resolve-IbisComparablePath -Path $ToolsRoot) -and $ToolDefinition.renameExtractedDirectoryTo) {
             $toolFolder = Join-Path $ToolsRoot $ToolDefinition.renameExtractedDirectoryTo
@@ -5635,6 +5727,10 @@ Export-ModuleMember -Function Get-IbisDefenderExclusionRecommendation
 Export-ModuleMember -Function Get-IbisDefenderExclusionStatus
 Export-ModuleMember -Function Add-IbisDefenderExclusion
 Export-ModuleMember -Function Remove-IbisDefenderExclusion
+Export-ModuleMember -Function Get-IbisSevenZipPath
+Export-ModuleMember -Function Expand-IbisArchive
+Export-ModuleMember -Function Get-IbisLongPathsEnabled
+Export-ModuleMember -Function Set-IbisLongPathsEnabled
 Export-ModuleMember -Function New-IbisToolInstallWorkspace
 Export-ModuleMember -Function Get-IbisToolPublishSource
 Export-ModuleMember -Function Backup-IbisToolInstallDirectory

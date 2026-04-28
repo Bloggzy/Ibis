@@ -4,6 +4,14 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.5.9 - 2026-04-28
+
+- Renamed the Setup tab to `Setup tools`.
+- Added an `Open tools folder` button beside the tools folder browser, enabled only when the selected folder exists.
+- Added admin-only controls for the Windows `LongPathsEnabled` setting.
+- Shortened Defender-aware tool staging paths and extraction subfolders to reduce path length pressure during installs such as Chainsaw.
+- Added a 7-Zip extraction fallback after `Expand-Archive` and .NET ZIP extraction fail.
+
 ## v0.5.8 - 2026-04-27
 
 - Added the Info tab tagline: "A bin chicken for Windows forensic artefacts."
