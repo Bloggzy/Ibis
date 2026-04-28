@@ -4,6 +4,13 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.0 - 2026-04-28
+
+- Added a project versioning note that patch versions roll from `.9` to the next minor version rather than using `.10`.
+- Added a Visual C++ Redistributable 2015+ x64 prerequisite check on the Setup tools tab.
+- Added a Setup tools button that opens Microsoft's latest supported Visual C++ Redistributable page.
+- Added guidance for installing the runtime with `winget install -e --id Microsoft.VCRedist.2015+.x64`.
+
 ## v0.5.9 - 2026-04-28
 
 - Renamed the Setup tab to `Setup tools`.

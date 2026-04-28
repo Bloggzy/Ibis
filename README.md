@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.5.9`
+Current version: `v0.6.0`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -16,6 +16,7 @@ Ibis is pre-1.0 beta software. The current version and default settings are stor
 
 - Windows analyst VM or workstation.
 - Windows PowerShell 5.1 or PowerShell 7.
+- Microsoft Visual C++ Redistributable 2015+ x64 for several native DFIR tools.
 - Internet access for tool downloads and GitHub latest-release checks, unless tools are installed manually.
 - Administrator rights if you want Ibis to add or remove Microsoft Defender exclusions.
 - A read-only mounted image or a working copy of a triage collection is strongly recommended.
@@ -46,7 +47,7 @@ Typical workflow:
 ## GUI Tabs
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
-- `Setup tools`: tools folder, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, and Windows long path support controls.
+- `Setup tools`: tools folder, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel-before-next-module.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
@@ -197,6 +198,12 @@ Ibis supports direct downloads and GitHub latest-release downloads where configu
 
 ZIP extraction tries PowerShell `Expand-Archive`, then a .NET fallback, then 7-Zip if `7z.exe` or `7za.exe` is available. The `Setup tools` tab also includes admin-only controls for the Windows `LongPathsEnabled` registry setting, which may require a restart before every process observes the change.
 
+Some tools require the Microsoft Visual C++ Redistributable 2015+ x64 runtime. Ibis checks for it on the `Setup tools` tab and links to Microsoft's supported download page. On a fresh analyst VM, it can often be installed with:
+
+```powershell
+winget install -e --id Microsoft.VCRedist.2015+.x64
+```
+
 ## Defender Exclusions
 
 Tools and rule sets such as Chainsaw, Hayabusa, and Takajo may trigger Defender false positives. The `Setup tools` tab can check, add, and remove recommended folder exclusions based on tool metadata.
@@ -251,5 +258,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.5.9`, both test runs pass with `115` tests.
+As of `v0.6.0`, both test runs pass with `116` tests.
 

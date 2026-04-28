@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.5.9'
+        $config.version | Should Be '0.6.0'
     }
 
     It 'records release history in the changelog' {
@@ -72,6 +72,15 @@ Describe 'Ibis core configuration' {
         $normalized = ConvertTo-IbisGuiDisplayText -Text $text -StripAnsi
 
         $normalized | Should Be "one`r`ntwo`r`nthreefour"
+    }
+
+    It 'checks for the Visual C++ Redistributable prerequisite' {
+        $status = Get-IbisVisualCppRedistributableStatus -Architecture 'x64'
+
+        $status.Architecture | Should Be 'x64'
+        $status.MicrosoftUrl | Should Match 'latest-supported-vc-redist'
+        [string]::IsNullOrWhiteSpace([string]$status.Message) | Should Be $false
+        $status.PSObject.Properties.Name -contains 'Present' | Should Be $true
     }
 }
 

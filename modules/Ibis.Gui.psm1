@@ -1361,6 +1361,24 @@ function Show-IbisGui {
     $removeDefenderExclusionsButton.Width = 86
     $defenderActionsGroup.Controls.Add($removeDefenderExclusionsButton)
 
+    $runtimePrereqGroup = New-Object System.Windows.Forms.GroupBox
+    $runtimePrereqGroup.Text = 'Runtime prerequisites'
+    $runtimePrereqGroup.Location = New-Object System.Drawing.Point(394, 180)
+    $runtimePrereqGroup.Size = New-Object System.Drawing.Size(362, 44)
+    $setupTab.Controls.Add($runtimePrereqGroup)
+
+    $vcRedistStatusLabel = New-Object System.Windows.Forms.Label
+    $vcRedistStatusLabel.Location = New-Object System.Drawing.Point(12, 18)
+    $vcRedistStatusLabel.Size = New-Object System.Drawing.Size(214, 18)
+    $vcRedistStatusLabel.Text = 'Checking VC++ Redistributable...'
+    $runtimePrereqGroup.Controls.Add($vcRedistStatusLabel)
+
+    $openVcRedistPageButton = New-Object System.Windows.Forms.Button
+    $openVcRedistPageButton.Text = 'Microsoft page'
+    $openVcRedistPageButton.Location = New-Object System.Drawing.Point(236, 14)
+    $openVcRedistPageButton.Width = 112
+    $runtimePrereqGroup.Controls.Add($openVcRedistPageButton)
+
     $toolList = New-Object System.Windows.Forms.ListView
     $toolList.Location = New-Object System.Drawing.Point(12, 236)
     $toolList.Size = New-Object System.Drawing.Size(744, 150)
@@ -1803,6 +1821,19 @@ function Show-IbisGui {
         }
     }
 
+    $updateVcRedistStatus = {
+        $vcStatus = Get-IbisVisualCppRedistributableStatus -Architecture 'x64'
+        if ($vcStatus.Present) {
+            $vcRedistStatusLabel.Text = 'VC++ 2015+ x64 detected'
+            $vcRedistStatusLabel.ForeColor = [System.Drawing.Color]::DarkGreen
+        }
+        else {
+            $vcRedistStatusLabel.Text = 'VC++ 2015+ x64 missing'
+            $vcRedistStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+        }
+        $vcStatus
+    }
+
     $setDefenderControlsForAdmin = {
         $isAdministrator = Test-IbisIsAdministrator
         $checkDefenderExclusionsButton.Enabled = $isAdministrator
@@ -1821,6 +1852,7 @@ function Show-IbisGui {
 
     & $setDefenderControlsForAdmin
     & $updateToolsFolderButtonState
+    [void](& $updateVcRedistStatus)
 
     $updateModuleDependencies = {
         if ($moduleCheckboxById.ContainsKey('hayabusa') -and $moduleCheckboxById.ContainsKey('takajo')) {
@@ -1874,6 +1906,7 @@ function Show-IbisGui {
 
     $refreshToolStatusList = {
         & $updateToolsFolderButtonState
+        $vcStatus = & $updateVcRedistStatus
         $toolList.Items.Clear()
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
         foreach ($status in $statuses) {
@@ -1892,6 +1925,10 @@ function Show-IbisGui {
         $missing = @($statuses | Where-Object { -not $_.Present })
         $statusLabel.Text = "$($statuses.Count) tools checked; $($missing.Count) missing"
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $vcStatus.Message
+        if (-not $vcStatus.Present) {
+            Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Warning: $($vcStatus.Message)`r`nInstall with winget if available: winget install -e --id Microsoft.VCRedist.2015+.x64`r`n" -StripAnsi
+        }
     }
 
     $testSourceWriteBoundary = {
@@ -2057,6 +2094,12 @@ function Show-IbisGui {
             Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message $message
             $statusLabel.Text = 'Long path update failed'
         }
+    })
+
+    $openVcRedistPageButton.Add_Click({
+        $vcStatus = Get-IbisVisualCppRedistributableStatus -Architecture 'x64'
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Opening Visual C++ Redistributable page: $($vcStatus.MicrosoftUrl)"
+        Start-Process -FilePath $vcStatus.MicrosoftUrl
     })
 
     $sourceBrowseButton.Add_Click({

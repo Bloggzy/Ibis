@@ -767,6 +767,80 @@ function Set-IbisLongPathsEnabled {
     }
 }
 
+function Get-IbisVisualCppRedistributableStatus {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('x64', 'x86')]
+        [string]$Architecture = 'x64'
+    )
+
+    $runtimeKey = "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\$Architecture"
+    $installed = $false
+    $version = $null
+    $source = $null
+    $displayNames = @()
+
+    try {
+        if (Test-Path -LiteralPath $runtimeKey -PathType Container) {
+            $runtime = Get-ItemProperty -LiteralPath $runtimeKey -ErrorAction Stop
+            if ([int]$runtime.Installed -eq 1) {
+                $installed = $true
+                $version = [string]$runtime.Version
+                $source = $runtimeKey
+            }
+        }
+    }
+    catch {
+    }
+
+    foreach ($uninstallRoot in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )) {
+        try {
+            if (-not (Test-Path -LiteralPath $uninstallRoot -PathType Container)) {
+                continue
+            }
+
+            foreach ($item in @(Get-ChildItem -LiteralPath $uninstallRoot -ErrorAction SilentlyContinue)) {
+                try {
+                    $properties = Get-ItemProperty -LiteralPath $item.PSPath -ErrorAction Stop
+                    $displayName = [string]$properties.DisplayName
+                    if ($displayName -match 'Microsoft Visual C\+\+ (2015|2017|2019|2022|2015-2022).*Redistributable' -and $displayName -match "\($Architecture\)") {
+                        $displayNames += $displayName
+                        if (-not $installed) {
+                            $installed = $true
+                            $version = [string]$properties.DisplayVersion
+                            $source = $item.PSPath
+                        }
+                    }
+                }
+                catch {
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    $message = if ($installed) {
+        "Microsoft Visual C++ Redistributable 2015+ ($Architecture) appears to be installed."
+    }
+    else {
+        "Microsoft Visual C++ Redistributable 2015+ ($Architecture) was not detected. Some DFIR tools may fail to start until it is installed."
+    }
+
+    [pscustomobject]@{
+        Present = $installed
+        Architecture = $Architecture
+        Version = $version
+        Source = $source
+        DisplayNames = @($displayNames | Select-Object -Unique)
+        MicrosoftUrl = 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist'
+        Message = $message
+    }
+}
+
 function New-IbisToolInstallWorkspace {
     [CmdletBinding()]
     param(
@@ -5731,6 +5805,7 @@ Export-ModuleMember -Function Get-IbisSevenZipPath
 Export-ModuleMember -Function Expand-IbisArchive
 Export-ModuleMember -Function Get-IbisLongPathsEnabled
 Export-ModuleMember -Function Set-IbisLongPathsEnabled
+Export-ModuleMember -Function Get-IbisVisualCppRedistributableStatus
 Export-ModuleMember -Function New-IbisToolInstallWorkspace
 Export-ModuleMember -Function Get-IbisToolPublishSource
 Export-ModuleMember -Function Backup-IbisToolInstallDirectory

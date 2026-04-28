@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.5.9`.
+Current version: `v0.6.0`.
 
 ## Build From Scratch Shape
 
@@ -173,6 +173,7 @@ GUI behaviour:
 - Auto-check tools when the Setup tools tab/form opens.
 - Include an Open tools folder button that is enabled only when the folder exists.
 - Include admin-only Windows long path support enable/disable controls.
+- Include a Visual C++ Redistributable 2015+ x64 prerequisite check and link to Microsoft's supported download page.
 - Tool management buttons include `Recheck Tools`, `Download Missing Tools`, `Guidance`, and `Update Hayabusa Rules`.
 - Defender controls include check/add/remove exclusions and admin-aware enablement.
 - Run tools groups source, output, hostname, and processing modules.
@@ -229,6 +230,7 @@ Use pre-1.0 semantic-style versioning while beta:
 
 - `v0.5.0` was the first rebuilt beta baseline.
 - Patch releases such as `v0.5.9` record incremental fixes, documentation refreshes, and small additions.
+- Do not create `.10` patch versions. After `v0.5.9`, roll to `v0.6.0`; after `v0.6.9`, roll to `v0.7.0`, and so on.
 
 When changing behaviour, update:
 
