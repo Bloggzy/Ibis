@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.1'
+        $config.version | Should Be '0.6.2'
     }
 
     It 'records release history in the changelog' {
@@ -126,6 +126,8 @@ Describe 'Ibis core configuration' {
         $summary[0] | Should Be 'Processing summary: 1 worked, 1 failed, 1 skipped.'
         ($summary -join "`n") | Should Match 'SRUM: SrumECmd failed'
         ($summary -join "`n") | Should Match 'Tool zimmerman-srumecmd: SrumECmd is missing'
+        ($summary -join "`n") | Should Match 'Skipped items:'
+        ($summary -join "`n") | Should Match 'Prefetch: Prefetch folder was not found'
     }
 }
 

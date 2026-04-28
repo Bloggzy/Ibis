@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.1`
+Current version: `v0.6.2`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -222,7 +222,7 @@ Logs include:
 
 - GUI actions and status messages.
 - Processing progress.
-- End-of-run processing summaries showing worked, failed, and skipped module counts plus failed item names.
+- End-of-run processing summaries showing worked, failed, and skipped module counts plus failed and skipped item names/reasons.
 - Command line hints for external tools.
 - File creation, move, rename, update, and removal audit events where Ibis performs them.
 - Shutdown entry when the GUI closes.
@@ -259,5 +259,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.1`, both test runs pass with `117` tests.
+As of `v0.6.2`, both test runs pass with `117` tests.
 

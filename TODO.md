@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.1`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.2`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -47,7 +47,7 @@ This roadmap reflects the current state as of `v0.6.1`. The major first-pass pro
 - [x] Disable relevant controls while processing.
 - [x] Background processing runspace so the GUI stays responsive.
 - [x] Processing status/progress feedback.
-- [x] End-of-run processing summary highlighting failed modules/tools.
+- [x] End-of-run processing summary highlighting failed and skipped modules/tools.
 - [x] Pause/resume and cancel-before-next-module controls.
 - [x] Completion popup.
 - [x] Optional completion beep.

@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.6.1`.
+Current version: `v0.6.2`.
 
 ## Build From Scratch Shape
 
@@ -97,7 +97,7 @@ Log:
 - Selected paths and module decisions.
 - External command line hints with full paths and arguments.
 - File operations performed by Ibis, including create, update, move/rename, remove, backup, and copy where practical.
-- End-of-run summaries with worked, failed, and skipped module counts and failed module/tool names.
+- End-of-run summaries with worked, failed, and skipped module counts plus failed/skipped module and tool names with reasons.
 
 Command line hints should also appear in the GUI run log so users can manually retry failed tools.
 
@@ -184,7 +184,7 @@ GUI behaviour:
 - Takajo depends on Hayabusa.
 - Disable relevant controls during background operations.
 - Provide progress, pause/resume, and cancel-before-next-module controls.
-- Print a processing summary at the end of each run, especially highlighting failures.
+- Print a processing summary at the end of each run, especially highlighting failures and explaining skipped modules.
 - Notify at completion with a popup and optional beep.
 - Use the embedded base64 Ibis icon; no external icon file is required.
 - Normalise text displayed in WinForms text boxes so CRLF and ANSI/control sequences render cleanly.
