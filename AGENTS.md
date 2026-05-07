@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.6.3`.
+Current version: `v0.6.4`.
 
 ## Build From Scratch Shape
 
@@ -97,6 +97,7 @@ Log:
 - Selected paths and module decisions.
 - External command line hints with full paths and arguments.
 - File operations performed by Ibis, including create, update, move/rename, remove, backup, and copy where practical.
+- Move/rename hints from module results should be emitted through processing progress immediately after that module returns, not replayed in one end-of-run batch.
 - End-of-run summaries with worked, failed, and skipped module counts plus failed/skipped module and tool names with reasons.
 
 Command line hints should also appear in the GUI run log so users can manually retry failed tools.

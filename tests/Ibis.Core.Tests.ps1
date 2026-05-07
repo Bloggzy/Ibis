@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.3'
+        $config.version | Should Be '0.6.4'
     }
 
     It 'records release history in the changelog' {

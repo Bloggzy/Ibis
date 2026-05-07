@@ -1212,6 +1212,116 @@ function Start-IbisProcessingRunspace {
             }
         }
 
+        function Get-IbisProcessingFileMoveHint {
+            param([object]$InputObject)
+
+            $hints = New-Object System.Collections.Generic.List[object]
+            $seen = @{}
+
+            $visit = {
+                param($Value)
+
+                if ($null -eq $Value -or $Value -is [string]) {
+                    return
+                }
+
+                $valueType = $Value.GetType()
+                if ($valueType.IsPrimitive -or $Value -is [decimal] -or $Value -is [datetime] -or $Value -is [guid] -or $Value -is [enum]) {
+                    return
+                }
+
+                if ($Value -is [System.Collections.IDictionary]) {
+                    $originalPath = $null
+                    $newPath = $null
+                    foreach ($key in $Value.Keys) {
+                        if ([string]$key -eq 'OriginalPath') {
+                            $originalPath = [string]$Value[$key]
+                        }
+                        elseif ([string]$key -eq 'NewPath') {
+                            $newPath = [string]$Value[$key]
+                        }
+                    }
+
+                    if (-not [string]::IsNullOrWhiteSpace($originalPath) -and -not [string]::IsNullOrWhiteSpace($newPath)) {
+                        $key = '{0}|{1}' -f $originalPath, $newPath
+                        if (-not $seen.ContainsKey($key)) {
+                            $seen[$key] = $true
+                            $hints.Add([pscustomobject]@{ OriginalPath = $originalPath; NewPath = $newPath })
+                        }
+                    }
+
+                    foreach ($key in $Value.Keys) {
+                        & $visit $Value[$key]
+                    }
+                    return
+                }
+
+                if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+                    foreach ($item in $Value) {
+                        & $visit $item
+                    }
+                    return
+                }
+
+                $properties = @($Value.PSObject.Properties)
+                $originalPath = ($properties | Where-Object { $_.Name -eq 'OriginalPath' } | Select-Object -First 1).Value
+                $newPath = ($properties | Where-Object { $_.Name -eq 'NewPath' } | Select-Object -First 1).Value
+                if (-not [string]::IsNullOrWhiteSpace([string]$originalPath) -and -not [string]::IsNullOrWhiteSpace([string]$newPath)) {
+                    $key = '{0}|{1}' -f $originalPath, $newPath
+                    if (-not $seen.ContainsKey($key)) {
+                        $seen[$key] = $true
+                        $hints.Add([pscustomobject]@{
+                            OriginalPath = [string]$originalPath
+                            NewPath = [string]$newPath
+                        })
+                    }
+                }
+
+                foreach ($property in $properties) {
+                    & $visit $property.Value
+                }
+            }
+
+            & $visit $InputObject
+            $hints.ToArray()
+        }
+
+        function Write-IbisProcessingFileOperationHints {
+            param(
+                [object]$Result,
+                [string]$ModuleId,
+                [string]$ModuleName,
+                [int]$Index,
+                [int]$Total
+            )
+
+            if ($null -eq $Result) {
+                return
+            }
+
+            $sourceObjects = @($Result)
+            if (-not [string]::IsNullOrWhiteSpace([string]$Result.JsonPath) -and (Test-Path -LiteralPath $Result.JsonPath -PathType Leaf)) {
+                try {
+                    $sourceObjects += Get-Content -LiteralPath $Result.JsonPath -Raw | ConvertFrom-Json
+                }
+                catch {
+                    Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ModuleId -ToolName $ModuleName -Stage 'File operation' -Message "Unable to read file operation hints from summary JSON: $($Result.JsonPath)" -Index $Index -Total $Total -Status 'Audit'
+                }
+            }
+
+            $seen = @{}
+            foreach ($sourceObject in $sourceObjects) {
+                foreach ($hint in @(Get-IbisProcessingFileMoveHint -InputObject $sourceObject)) {
+                    $key = '{0}|{1}' -f $hint.OriginalPath, $hint.NewPath
+                    if ($seen.ContainsKey($key)) {
+                        continue
+                    }
+                    $seen[$key] = $true
+                    Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ModuleId -ToolName $ModuleName -Stage 'File operation' -Message "File moved/renamed: $($hint.OriginalPath) -> $($hint.NewPath)" -Index $Index -Total $Total -Status 'Audit'
+                }
+            }
+        }
+
         $currentOutputRoot = $OutputRoot
         $currentHostname = $Hostname
         $preserveBlankHostname = [string]::IsNullOrWhiteSpace($Hostname)
@@ -1267,6 +1377,7 @@ function Start-IbisProcessingRunspace {
 
                     Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Completed' -Message "$($result.ModuleId): $($result.Status) - $($result.Message)" -Index $index -Total $total -Status $result.Status
                     Write-IbisProcessingCommandLineHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
+                    Write-IbisProcessingFileOperationHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
                     if ($result.OutputPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputPath -Index $index -Total $total -Status 'Info' }
                     if ($result.OutputDirectory) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputDirectory -Index $index -Total $total -Status 'Info' }
                     if ($result.JsonPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Summary' -Message $result.JsonPath -Index $index -Total $total -Status 'Info' }
@@ -2884,9 +2995,6 @@ function Show-IbisGui {
             foreach ($moduleResult in $moduleResults) {
                 if ($moduleResult.ErrorMessage) {
                     Add-IbisLogLine -LogTextBox $logTextBox -Level 'ERROR' -Message "$($moduleResult.ModuleId) failed: $($moduleResult.ErrorMessage)"
-                }
-                if ($null -ne $moduleResult.Result) {
-                    Add-IbisFileOperationHints -Result $moduleResult.Result -LogFilePath $sessionLogPath
                 }
                 if ($moduleResult.Hostname -and $moduleResult.Hostname -ne 'Unknown') {
                     $hostTextBox.Text = $moduleResult.Hostname
