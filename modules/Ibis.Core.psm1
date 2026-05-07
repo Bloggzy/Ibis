@@ -2234,17 +2234,29 @@ function Invoke-IbisProcessCapture {
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
-    [void]$process.Start()
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
+    try {
+        [void]$process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdoutTask.Wait()
+        $stderrTask.Wait()
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        $exitCode = $process.ExitCode
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
 
     [pscustomobject]@{
         FilePath = $FilePath
         Arguments = @($ArgumentList)
         CommandLine = $commandLine
         WorkingDirectory = $WorkingDirectory
-        ExitCode = $process.ExitCode
+        ExitCode = $exitCode
         StandardOutput = $stdout
         StandardError = $stderr
     }

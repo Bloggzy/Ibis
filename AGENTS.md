@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.6.2`.
+Current version: `v0.6.3`.
 
 ## Build From Scratch Shape
 
@@ -199,6 +199,7 @@ Each module should:
 - Resolve the required tool by ID from tool definitions.
 - Return `Failed` and write summary JSON when the source exists but the tool is missing.
 - Capture stderr for failed external tools where practical.
+- Drain stdout and stderr concurrently while external tools run; do not read one stream to completion before reading the other.
 - Log full command line hints.
 - Write a summary JSON with source, output, tool result, warnings, renamed outputs, and useful paths.
 - Return a structured object with `ModuleId`, `Status`, `HostOutputRoot`, `OutputDirectory`, `JsonPath`, and `Message` where practical.

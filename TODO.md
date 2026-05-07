@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.2`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.3`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -92,6 +92,7 @@ This roadmap reflects the current state as of `v0.6.2`. The major first-pass pro
 - [x] Treat absent artefact sources as skipped, not fatal.
 - [x] Treat missing tools as failed module results with summary JSON.
 - [x] Capture stderr for failed external tools where practical.
+- [x] Capture external tool stdout/stderr concurrently to avoid pipe-buffer hangs.
 - [x] Create a date-stamped session log file.
 - [x] Record command line hints for external tool invocations.
 - [x] Record Ibis file audit events for create/update/move/remove operations where practical.

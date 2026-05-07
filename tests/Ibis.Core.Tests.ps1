@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.2'
+        $config.version | Should Be '0.6.3'
     }
 
     It 'records release history in the changelog' {
@@ -600,6 +600,21 @@ Describe 'Ibis command specs' {
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
+    }
+
+    It 'captures large stdout and stderr streams without blocking the child process' {
+        $hostExe = (Get-Process -Id $PID).Path
+        if ([string]::IsNullOrWhiteSpace($hostExe)) {
+            $hostExe = (Get-Command powershell.exe).Source
+        }
+        $script = '$chunk = "x" * 4096; 1..80 | ForEach-Object { [Console]::Out.WriteLine($chunk); [Console]::Error.WriteLine($chunk) }'
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+
+        $result = Invoke-IbisProcessCapture -FilePath $hostExe -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded)
+
+        $result.ExitCode | Should Be 0
+        $result.StandardOutput.Length -gt 100000 | Should Be $true
+        $result.StandardError.Length -gt 100000 | Should Be $true
     }
 }
 

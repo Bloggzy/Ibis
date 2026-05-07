@@ -4,6 +4,11 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.3 - 2026-05-07
+
+- Updated external tool process capture to drain stdout and stderr concurrently while tools run, preventing pipe-buffer hangs seen with ParseUSBs.
+- Added a regression test that runs a noisy child PowerShell process and verifies Ibis captures large stdout and stderr streams without blocking.
+
 ## v0.6.2 - 2026-04-28
 
 - Extended the end-of-run processing summary to list skipped modules/tools and their skip reasons, in addition to failed items.
