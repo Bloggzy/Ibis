@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.5`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.6`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -90,9 +90,11 @@ This roadmap reflects the current state as of `v0.6.5`. The major first-pass pro
 - [x] Rename timestamp-prefixed outputs from tools such as PECmd, SrumECmd, SumECmd, and user artefact tools.
 - [x] Use `_Working` folder names for special helper/transparency output folders.
 - [x] Emit processing command line hints through progress updates near the related module output.
+- [x] Emit User artefact progress in per-profile order as each artefact step completes.
 - [x] Treat absent artefact sources as skipped, not fatal.
 - [x] Treat missing tools as failed module results with summary JSON.
 - [x] Isolate User artefact processing failures per user and artefact so later artefacts/profiles continue.
+- [x] Use hidden-aware discovery for file/directory enumeration paths.
 - [x] Capture stderr for failed external tools where practical.
 - [x] Capture external tool stdout/stderr concurrently to avoid pipe-buffer hangs.
 - [x] Create a date-stamped session log file.

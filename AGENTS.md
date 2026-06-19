@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
 
-Current version: `v0.6.5`.
+Current version: `v0.6.6`.
 
 ## Build From Scratch Shape
 
@@ -32,6 +32,7 @@ Keep GUI/state handling separate from processing logic. If behaviour can be test
 - Treat missing artefacts as normal; return `Skipped` where possible.
 - Treat missing tools or failed external commands as module `Failed`, but do not stop unrelated modules.
 - For multi-profile/multi-artefact modules, isolate failures at the smallest practical unit so one failed artefact does not stop later artefacts or profiles.
+- Use hidden-aware discovery (`-Force`) when enumerating evidence artefacts; hidden files and folders may be deliberate attacker tradecraft.
 - Treat external DFIR tools as explicit dependencies with metadata.
 - Make adding a tool or processing module straightforward.
 - Do not modify source evidence directly.
@@ -99,6 +100,7 @@ Log:
 - External command line hints with full paths and arguments.
 - File operations performed by Ibis, including create, update, move/rename, remove, backup, and copy where practical.
 - Move/rename hints from module results should be emitted through processing progress immediately after that module returns, not replayed in one end-of-run batch.
+- Multi-user modules should emit progress as each user artefact step runs so entries remain grouped by profile in chronological logs.
 - End-of-run summaries with worked, failed, and skipped module counts plus failed/skipped module and tool names with reasons, including nested per-user artefact failures/skips.
 
 Command line hints should also appear in the GUI run log so users can manually retry failed tools.
@@ -219,7 +221,7 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - Prefetch: run PECmd and rename timestamped output.
 - NTFS Metadata: locate `$MFT` and `$UsnJrnl:$J` across mounted roots and Velociraptor NTFS uploads; run MFTECmd.
 - SRUM: run SrumECmd with SRUDB.dat and prepared SOFTWARE hive; rename timestamped output.
-- User Artefacts: process all profiles, including default/system profiles; avoid duplicate folder nesting such as `PSReadLine\PSReadLine`; record per-user/per-artefact failed and skipped results and continue through later artefacts/profiles after a failure.
+- User Artefacts: process all profiles, including default/system profiles; avoid duplicate folder nesting such as `PSReadLine\PSReadLine`; record per-user/per-artefact failed and skipped results and continue through later artefacts/profiles after a failure; emit progress/log records in user order as each artefact step finishes.
 - Event Logs: run EvtxECmd.
 - DuckDB Event Summaries: sub-module of EvtxECmd using editable SQL templates.
 - Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup tools.

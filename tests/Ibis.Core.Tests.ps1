@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.5'
+        $config.version | Should Be '0.6.6'
     }
 
     It 'records release history in the changelog' {
@@ -1664,6 +1664,59 @@ Describe 'Ibis SRUM and user artefacts' {
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-sbecmd' }).Count | Should Be 1
             $alice.PSReadLine.Status | Should Be 'Completed'
             $bob.PSReadLine.Status | Should Be 'Completed'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'detects hidden user artefact paths and writes per-user progress in order' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        $progressPath = Join-Path $tempRoot 'user-progress.jsonl'
+        $aliceRoot = Join-Path $sourceRoot 'Users\Alice'
+        $bobRoot = Join-Path $sourceRoot 'Users\Bob'
+        $aliceRecent = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $bobRecent = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $alicePsReadLine = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+        $bobPsReadLine = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+
+        New-Item -ItemType Directory -Path $aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine -Force | Out-Null
+        'Get-Date' | Out-File -LiteralPath (Join-Path $alicePsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+        'Get-Process' | Out-File -LiteralPath (Join-Path $bobPsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+        (Get-Item -LiteralPath $aliceRecent -Force).Attributes = (Get-Item -LiteralPath $aliceRecent -Force).Attributes -bor [System.IO.FileAttributes]::Hidden
+
+        try {
+            $result = Invoke-IbisUserArtifacts `
+                -ToolsRoot $tempRoot `
+                -ToolDefinitions @() `
+                -SourceRoot $sourceRoot `
+                -OutputRoot $outputRoot `
+                -Hostname 'TESTHOST' `
+                -ProgressPath $progressPath `
+                -ProgressIndex 3 `
+                -ProgressTotal 7
+
+            $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
+
+            $events = @(Get-Content -LiteralPath $progressPath | ConvertFrom-Json)
+            $aliceEventIndexes = @()
+            $bobEventIndexes = @()
+            for ($eventIndex = 0; $eventIndex -lt $events.Count; $eventIndex++) {
+                if ([string]$events[$eventIndex].Stage -like 'Alice / *') {
+                    $aliceEventIndexes += $eventIndex
+                }
+                elseif ([string]$events[$eventIndex].Stage -like 'Bob / *') {
+                    $bobEventIndexes += $eventIndex
+                }
+            }
+
+            ($aliceEventIndexes.Count -gt 0) | Should Be $true
+            ($bobEventIndexes.Count -gt 0) | Should Be $true
+            (($aliceEventIndexes | Measure-Object -Maximum).Maximum -lt ($bobEventIndexes | Measure-Object -Minimum).Minimum) | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force

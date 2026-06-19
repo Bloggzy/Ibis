@@ -4,6 +4,13 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.6 - 2026-06-19
+
+- Added ordered per-user progress logging inside User artefact processing so log entries for each profile are emitted as each artefact is processed before moving to the next profile.
+- Suppressed end-of-module replay of User artefact command/file hints in the background processing path to reduce confusing log duplication and out-of-context entries.
+- Added broader hidden-item discovery by using `-Force` on remaining file/directory lookup paths and related `Get-Item` checks.
+- Added regression coverage for hidden user artefact paths and per-user progress ordering.
+
 ## v0.6.5 - 2026-06-19
 
 - Hardened User artefact processing so a failure in one user profile artefact does not stop later artefacts for the same user or later user profiles.

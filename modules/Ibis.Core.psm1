@@ -72,7 +72,7 @@ function Get-IbisToolDefinition {
     }
 
     $definitions = @()
-    $files = Get-ChildItem -LiteralPath $toolDefinitionRoot -Filter '*.json' -File | Sort-Object Name
+    $files = Get-ChildItem -LiteralPath $toolDefinitionRoot -Filter '*.json' -File -Force | Sort-Object Name
     foreach ($file in $files) {
         try {
             $definition = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
@@ -802,7 +802,7 @@ function Get-IbisVisualCppRedistributableStatus {
                 continue
             }
 
-            foreach ($item in @(Get-ChildItem -LiteralPath $uninstallRoot -ErrorAction SilentlyContinue)) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $uninstallRoot -Force -ErrorAction SilentlyContinue)) {
                 try {
                     $properties = Get-ItemProperty -LiteralPath $item.PSPath -ErrorAction Stop
                     $displayName = [string]$properties.DisplayName
@@ -924,13 +924,13 @@ function Backup-IbisToolInstallDirectory {
         if ($ToolDefinition -and $ToolDefinition.renameExtractedDirectoryTo) {
             $candidate = Join-Path $ToolsRoot $ToolDefinition.renameExtractedDirectoryTo
             if (Test-Path -LiteralPath $candidate) {
-                $items += Get-Item -LiteralPath $candidate
+                $items += Get-Item -LiteralPath $candidate -Force
             }
         }
         if ($ToolDefinition -and $ToolDefinition.renameExtractedDirectoryFrom) {
             $candidate = Join-Path $ToolsRoot $ToolDefinition.renameExtractedDirectoryFrom
             if (Test-Path -LiteralPath $candidate) {
-                $items += Get-Item -LiteralPath $candidate
+                $items += Get-Item -LiteralPath $candidate -Force
             }
         }
     }
@@ -1042,7 +1042,7 @@ function Test-IbisToolInstallState {
             $toolFolder = Join-Path $ToolsRoot $ToolDefinition.renameExtractedDirectoryTo
             $items = @()
             if (Test-Path -LiteralPath $toolFolder) {
-                $items = @(Get-Item -LiteralPath $toolFolder)
+                $items = @(Get-Item -LiteralPath $toolFolder -Force)
             }
         }
         if ($items.Count -gt 0) {
@@ -1297,7 +1297,7 @@ function Get-IbisExecutableRenameCandidate {
         return @()
     }
 
-    Get-ChildItem -LiteralPath $InstallDirectory -Filter $Pattern -File -Recurse -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $InstallDirectory -Filter $Pattern -File -Recurse -Force -ErrorAction SilentlyContinue |
         Where-Object {
             $relativePath = $_.FullName.Substring($InstallDirectory.Length).TrimStart('\', '/')
             $pathParts = $relativePath -split '[\\/]'
@@ -1959,7 +1959,7 @@ function Get-IbisCachedRegistryHivePreparation {
             return $null
         }
 
-        $sourceItem = Get-Item -LiteralPath $SourceHivePath -ErrorAction Stop
+        $sourceItem = Get-Item -LiteralPath $SourceHivePath -Force -ErrorAction Stop
         if ($cached.SourceLength -ne $sourceItem.Length) {
             return $null
         }
@@ -2093,7 +2093,7 @@ function Invoke-IbisPrepareRegistryHiveFile {
         return $cached
     }
 
-    $sourceItem = Get-Item -LiteralPath $SourceHivePath
+    $sourceItem = Get-Item -LiteralPath $SourceHivePath -Force
     $copyResult = Copy-IbisRegistryHiveToCache -SourceHivePath $SourceHivePath -CacheDirectory $hiveCacheDirectory
     $checkBefore = Test-IbisRegistryHiveTransactionState -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $copyResult.HivePath
 
@@ -2419,7 +2419,7 @@ function Invoke-IbisRegRipperHiveMode {
         $status = 'Failed'
         $message = "RegRipper exited with code $($result.ExitCode)."
     }
-    elseif ((Test-Path -LiteralPath $OutputPath -PathType Leaf) -and ((Get-Item -LiteralPath $OutputPath).Length -eq 0)) {
+    elseif ((Test-Path -LiteralPath $OutputPath -PathType Leaf) -and ((Get-Item -LiteralPath $OutputPath -Force).Length -eq 0)) {
         $status = 'Completed With Warnings'
         $message = 'RegRipper output file was created, but it is empty.'
     }
@@ -2715,7 +2715,7 @@ function Invoke-IbisAmcacheParser {
         $status = 'Completed With Warnings'
         $message = 'AmcacheParser completed, but the expected CSV was not found.'
     }
-    elseif ((Get-Item -LiteralPath $outputPath).Length -eq 0) {
+    elseif ((Get-Item -LiteralPath $outputPath -Force).Length -eq 0) {
         $status = 'Completed With Warnings'
         $message = 'AmcacheParser output CSV was created, but it is empty.'
     }
@@ -2928,7 +2928,7 @@ function Invoke-IbisAppCompatCacheParser {
         $status = 'Completed With Warnings'
         $message = 'AppCompatCacheParser completed, but the expected CSV was not found.'
     }
-    elseif ((Get-Item -LiteralPath $outputPath).Length -eq 0) {
+    elseif ((Get-Item -LiteralPath $outputPath -Force).Length -eq 0) {
         $status = 'Completed With Warnings'
         $message = 'AppCompatCacheParser output CSV was created, but it is empty.'
     }
@@ -4069,7 +4069,7 @@ function Copy-IbisPSReadLineHistory {
         $destinationName = Format-IbisHostPrefixedValue -Hostname $safeHost -Format '{0}-PSReadLine-{1}' -ArgumentList @($safeUserName, $sourceFile.Name)
         $destinationPath = Join-Path $OutputDirectory $destinationName
         Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force
-        $copiedItems += Get-Item -LiteralPath $destinationPath
+        $copiedItems += Get-Item -LiteralPath $destinationPath -Force
     }
 
     $sourceDirectories = @(Get-ChildItem -LiteralPath $SourceDirectory -Directory -Force -ErrorAction SilentlyContinue)
@@ -4200,6 +4200,64 @@ function Add-IbisUserArtifactResultContext {
     $Result
 }
 
+function Write-IbisUserArtifactProgressResult {
+    [CmdletBinding()]
+    param(
+        [object]$Result,
+
+        [string]$ProgressPath,
+
+        [int]$ProgressIndex = 0,
+
+        [int]$ProgressTotal = 0
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProgressPath) -or $null -eq $Result) {
+        return
+    }
+
+    foreach ($item in @($Result)) {
+        if ($null -eq $item -or $item -is [string]) {
+            continue
+        }
+
+        $userName = [string]$item.UserName
+        $artifact = [string]$item.Artifact
+        $operation = [string]$item.Operation
+        $status = [string]$item.Status
+        $message = [string]$item.Message
+        if ([string]::IsNullOrWhiteSpace($status)) {
+            $status = 'Info'
+        }
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = 'No message was provided.'
+        }
+
+        $context = @($userName, $artifact, $operation) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+        $stage = 'User artefact'
+        if ($context.Count -gt 0) {
+            $stage = $context -join ' / '
+        }
+
+        Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId 'user-artifacts' -ToolName 'User artefacts' -Stage $stage -Message "${stage}: ${status} - ${message}" -Index $ProgressIndex -Total $ProgressTotal -Status $status
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$item.CommandLine)) {
+            Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId 'user-artifacts' -ToolName 'User artefacts' -Stage 'Command line hint' -Message "${stage}: $($item.CommandLine)" -Index $ProgressIndex -Total $ProgressTotal -Status 'Info'
+        }
+
+        foreach ($renamedOutput in @($item.RenamedOutputs)) {
+            if ($null -eq $renamedOutput) {
+                continue
+            }
+            $originalPath = [string]$renamedOutput.OriginalPath
+            $newPath = [string]$renamedOutput.NewPath
+            if (-not [string]::IsNullOrWhiteSpace($originalPath) -and -not [string]::IsNullOrWhiteSpace($newPath)) {
+                Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId 'user-artifacts' -ToolName 'User artefacts' -Stage 'File operation' -Message "${stage}: File moved/renamed: $originalPath -> $newPath" -Index $ProgressIndex -Total $ProgressTotal -Status 'Audit'
+            }
+        }
+    }
+}
+
 function Invoke-IbisUserArtifactStep {
     [CmdletBinding()]
     param(
@@ -4225,19 +4283,31 @@ function Invoke-IbisUserArtifactStep {
 
         [string]$OutputPath,
 
-        [string]$OutputDirectory
+        [string]$OutputDirectory,
+
+        [string]$ProgressPath,
+
+        [int]$ProgressIndex = 0,
+
+        [int]$ProgressTotal = 0
     )
 
     try {
         $result = & $ScriptBlock
         if ($null -eq $result) {
-            return New-IbisUserArtifactIssue -UserName $UserName -Artifact $Artifact -Operation $Operation -Status 'Failed' -ToolId $ToolId -Description $Description -SourcePath $SourcePath -SourceDirectory $SourceDirectory -OutputPath $OutputPath -OutputDirectory $OutputDirectory -Message "$Operation returned no result for user $UserName."
+            $missingResult = New-IbisUserArtifactIssue -UserName $UserName -Artifact $Artifact -Operation $Operation -Status 'Failed' -ToolId $ToolId -Description $Description -SourcePath $SourcePath -SourceDirectory $SourceDirectory -OutputPath $OutputPath -OutputDirectory $OutputDirectory -Message "$Operation returned no result for user $UserName."
+            Write-IbisUserArtifactProgressResult -Result $missingResult -ProgressPath $ProgressPath -ProgressIndex $ProgressIndex -ProgressTotal $ProgressTotal
+            return $missingResult
         }
 
-        Add-IbisUserArtifactResultContext -Result $result -ToolId $ToolId -Description $Description -UserName $UserName -Artifact $Artifact -Operation $Operation
+        $result = Add-IbisUserArtifactResultContext -Result $result -ToolId $ToolId -Description $Description -UserName $UserName -Artifact $Artifact -Operation $Operation
+        Write-IbisUserArtifactProgressResult -Result $result -ProgressPath $ProgressPath -ProgressIndex $ProgressIndex -ProgressTotal $ProgressTotal
+        $result
     }
     catch {
-        New-IbisUserArtifactIssue -UserName $UserName -Artifact $Artifact -Operation $Operation -Status 'Failed' -ToolId $ToolId -Description $Description -SourcePath $SourcePath -SourceDirectory $SourceDirectory -OutputPath $OutputPath -OutputDirectory $OutputDirectory -Message "$Operation failed for user $UserName ($Artifact): $($_.Exception.Message)"
+        $failure = New-IbisUserArtifactIssue -UserName $UserName -Artifact $Artifact -Operation $Operation -Status 'Failed' -ToolId $ToolId -Description $Description -SourcePath $SourcePath -SourceDirectory $SourceDirectory -OutputPath $OutputPath -OutputDirectory $OutputDirectory -Message "$Operation failed for user $UserName ($Artifact): $($_.Exception.Message)"
+        Write-IbisUserArtifactProgressResult -Result $failure -ProgressPath $ProgressPath -ProgressIndex $ProgressIndex -ProgressTotal $ProgressTotal
+        $failure
     }
 }
 
@@ -4257,7 +4327,13 @@ function Invoke-IbisUserArtifacts {
         [Parameter(Mandatory = $true)]
         [string]$OutputRoot,
 
-        [string]$Hostname = 'HOST'
+        [string]$Hostname = 'HOST',
+
+        [string]$ProgressPath,
+
+        [int]$ProgressIndex = 0,
+
+        [int]$ProgressTotal = 0
     )
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
@@ -4265,6 +4341,11 @@ function Invoke-IbisUserArtifacts {
     $outputDirectory = Join-Path $hostOutputRoot 'Users'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $profiles = @(Get-IbisUserProfile -SourceRoot $SourceRoot)
+    $progressSplat = @{
+        ProgressPath = $ProgressPath
+        ProgressIndex = $ProgressIndex
+        ProgressTotal = $ProgressTotal
+    }
     if ($profiles.Count -eq 0) {
         return [pscustomobject]@{
             ModuleId = 'user-artifacts'
@@ -4299,7 +4380,9 @@ function Invoke-IbisUserArtifacts {
             }
         }
         catch {
-            $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'Profile' -Operation 'Create user output directory' -Status 'Failed' -ToolId "$safeUserName/Profile/Create output directory" -Description 'Create user output directory' -SourceDirectory $profile.ProfilePath -OutputDirectory $userOutputDirectory -Message "Unable to create user output directory for ${safeUserName}: $($_.Exception.Message)"
+            $issue = New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'Profile' -Operation 'Create user output directory' -Status 'Failed' -ToolId "$safeUserName/Profile/Create output directory" -Description 'Create user output directory' -SourceDirectory $profile.ProfilePath -OutputDirectory $userOutputDirectory -Message "Unable to create user output directory for ${safeUserName}: $($_.Exception.Message)"
+            $toolResults += $issue
+            Write-IbisUserArtifactProgressResult -Result $issue @progressSplat
             $userResults += [pscustomobject]@{
                 UserName = $profile.UserName
                 ProfilePath = $profile.ProfilePath
@@ -4312,7 +4395,7 @@ function Invoke-IbisUserArtifacts {
         }
 
         if (Test-Path -LiteralPath $profile.NtUserPath -PathType Leaf) {
-            $ntUser = Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'Prepare hive' -ToolId "$safeUserName/NTUSER/Prepare hive" -Description 'Prepare NTUSER.dat' -SourcePath $profile.NtUserPath -OutputDirectory $workingsDirectory -ScriptBlock {
+            $ntUser = Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'Prepare hive' -ToolId "$safeUserName/NTUSER/Prepare hive" -Description 'Prepare NTUSER.dat' -SourcePath $profile.NtUserPath -OutputDirectory $workingsDirectory -ScriptBlock {
                 Invoke-IbisPrepareRegistryHiveFile `
                     -ToolsRoot $ToolsRoot `
                     -ToolDefinitions $ToolDefinitions `
@@ -4327,10 +4410,14 @@ function Invoke-IbisUserArtifacts {
 
             if ($ntUser.Status -eq 'Failed' -or [string]::IsNullOrWhiteSpace($ntUser.PreparedHivePath)) {
                 $skipMessage = 'NTUSER.dat could not be prepared, so dependent RegRipper operations were skipped.'
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper all' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper all" -Description 'RegRipper NTUSER all' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper timeline' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper timeline" -Description 'RegRipper NTUSER timeline' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper run plugin' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper run" -Description 'RegRipper NTUSER run plugin' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper userassist plugin' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper userassist" -Description 'RegRipper NTUSER userassist plugin' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                $ntUserSkips = @(
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper all' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper all" -Description 'RegRipper NTUSER all' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper timeline' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper timeline" -Description 'RegRipper NTUSER timeline' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper run plugin' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper run" -Description 'RegRipper NTUSER run plugin' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper userassist plugin' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/RegRipper userassist" -Description 'RegRipper NTUSER userassist plugin' -SourcePath $profile.NtUserPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                )
+                $toolResults += $ntUserSkips
+                Write-IbisUserArtifactProgressResult -Result $ntUserSkips @progressSplat
             }
             else {
                 $ntUserAllOutput = Join-Path $userOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'RR-{0}-NTUSER.txt' -ArgumentList @($safeUserName))
@@ -4338,26 +4425,28 @@ function Invoke-IbisUserArtifacts {
                 $ntUserRunOutput = Join-Path $userOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'RR-{0}-NTUSER-Run-AutoStart.txt' -ArgumentList @($safeUserName))
                 $ntUserUserAssistOutput = Join-Path $userOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'RR-{0}-NTUSER-UserAssist.txt' -ArgumentList @($safeUserName))
 
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper all' -ToolId "$safeUserName/NTUSER/RegRipper all" -Description 'RegRipper NTUSER all' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserAllOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper all' -ToolId "$safeUserName/NTUSER/RegRipper all" -Description 'RegRipper NTUSER all' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserAllOutput -ScriptBlock {
                     Invoke-IbisRegRipperHiveMode -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $ntUser.PreparedHivePath -Mode 'All' -OutputPath $ntUserAllOutput
                 }
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper timeline' -ToolId "$safeUserName/NTUSER/RegRipper timeline" -Description 'RegRipper NTUSER timeline' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserTimelineOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper timeline' -ToolId "$safeUserName/NTUSER/RegRipper timeline" -Description 'RegRipper NTUSER timeline' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserTimelineOutput -ScriptBlock {
                     Invoke-IbisRegRipperHiveMode -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $ntUser.PreparedHivePath -Mode 'Timeline' -OutputPath $ntUserTimelineOutput
                 }
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper run plugin' -ToolId "$safeUserName/NTUSER/RegRipper run" -Description 'RegRipper NTUSER run plugin' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserRunOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper run plugin' -ToolId "$safeUserName/NTUSER/RegRipper run" -Description 'RegRipper NTUSER run plugin' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserRunOutput -ScriptBlock {
                     Invoke-IbisRegRipperPlugin -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $ntUser.PreparedHivePath -Plugin 'run' -OutputPath $ntUserRunOutput
                 }
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper userassist plugin' -ToolId "$safeUserName/NTUSER/RegRipper userassist" -Description 'RegRipper NTUSER userassist plugin' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserUserAssistOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'RegRipper userassist plugin' -ToolId "$safeUserName/NTUSER/RegRipper userassist" -Description 'RegRipper NTUSER userassist plugin' -SourcePath $ntUser.PreparedHivePath -OutputPath $ntUserUserAssistOutput -ScriptBlock {
                     Invoke-IbisRegRipperPlugin -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $ntUser.PreparedHivePath -Plugin 'userassist' -OutputPath $ntUserUserAssistOutput
                 }
             }
         }
         else {
-            $preparedHives += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'Prepare hive' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/Prepare hive" -Description 'Prepare NTUSER.dat' -SourcePath $profile.NtUserPath -OutputDirectory $workingsDirectory -Message "NTUSER.dat was not found for user $safeUserName."
+            $issue = New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'NTUSER.dat' -Operation 'Prepare hive' -Status 'Skipped' -ToolId "$safeUserName/NTUSER/Prepare hive" -Description 'Prepare NTUSER.dat' -SourcePath $profile.NtUserPath -OutputDirectory $workingsDirectory -Message "NTUSER.dat was not found for user $safeUserName."
+            $preparedHives += $issue
+            Write-IbisUserArtifactProgressResult -Result $issue @progressSplat
         }
 
         if (Test-Path -LiteralPath $profile.UsrClassPath -PathType Leaf) {
-            $usrClass = Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'Prepare hive' -ToolId "$safeUserName/UsrClass/Prepare hive" -Description 'Prepare UsrClass.dat' -SourcePath $profile.UsrClassPath -OutputDirectory $workingsDirectory -ScriptBlock {
+            $usrClass = Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'Prepare hive' -ToolId "$safeUserName/UsrClass/Prepare hive" -Description 'Prepare UsrClass.dat' -SourcePath $profile.UsrClassPath -OutputDirectory $workingsDirectory -ScriptBlock {
                 Invoke-IbisPrepareRegistryHiveFile `
                     -ToolsRoot $ToolsRoot `
                     -ToolDefinitions $ToolDefinitions `
@@ -4372,40 +4461,46 @@ function Invoke-IbisUserArtifacts {
 
             if ($usrClass.Status -eq 'Failed' -or [string]::IsNullOrWhiteSpace($usrClass.PreparedHivePath)) {
                 $skipMessage = 'UsrClass.dat could not be prepared, so dependent RegRipper operations were skipped.'
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper all' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/RegRipper all" -Description 'RegRipper UsrClass all' -SourcePath $profile.UsrClassPath -OutputDirectory $userOutputDirectory -Message $skipMessage
-                $toolResults += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper timeline' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/RegRipper timeline" -Description 'RegRipper UsrClass timeline' -SourcePath $profile.UsrClassPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                $usrClassSkips = @(
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper all' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/RegRipper all" -Description 'RegRipper UsrClass all' -SourcePath $profile.UsrClassPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                    New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper timeline' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/RegRipper timeline" -Description 'RegRipper UsrClass timeline' -SourcePath $profile.UsrClassPath -OutputDirectory $userOutputDirectory -Message $skipMessage
+                )
+                $toolResults += $usrClassSkips
+                Write-IbisUserArtifactProgressResult -Result $usrClassSkips @progressSplat
             }
             else {
                 $usrClassAllOutput = Join-Path $userOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'RR-{0}-UsrClass.txt' -ArgumentList @($safeUserName))
                 $usrClassTimelineOutput = Join-Path $userOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'RR-{0}-UsrClass-TLN.txt' -ArgumentList @($safeUserName))
 
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper all' -ToolId "$safeUserName/UsrClass/RegRipper all" -Description 'RegRipper UsrClass all' -SourcePath $usrClass.PreparedHivePath -OutputPath $usrClassAllOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper all' -ToolId "$safeUserName/UsrClass/RegRipper all" -Description 'RegRipper UsrClass all' -SourcePath $usrClass.PreparedHivePath -OutputPath $usrClassAllOutput -ScriptBlock {
                     Invoke-IbisRegRipperHiveMode -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $usrClass.PreparedHivePath -Mode 'All' -OutputPath $usrClassAllOutput
                 }
-                $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper timeline' -ToolId "$safeUserName/UsrClass/RegRipper timeline" -Description 'RegRipper UsrClass timeline' -SourcePath $usrClass.PreparedHivePath -OutputPath $usrClassTimelineOutput -ScriptBlock {
+                $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'RegRipper timeline' -ToolId "$safeUserName/UsrClass/RegRipper timeline" -Description 'RegRipper UsrClass timeline' -SourcePath $usrClass.PreparedHivePath -OutputPath $usrClassTimelineOutput -ScriptBlock {
                     Invoke-IbisRegRipperHiveMode -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -HivePath $usrClass.PreparedHivePath -Mode 'Timeline' -OutputPath $usrClassTimelineOutput
                 }
             }
         }
         else {
-            $preparedHives += New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'Prepare hive' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/Prepare hive" -Description 'Prepare UsrClass.dat' -SourcePath $profile.UsrClassPath -OutputDirectory $workingsDirectory -Message "UsrClass.dat was not found for user $safeUserName."
+            $issue = New-IbisUserArtifactIssue -UserName $safeUserName -Artifact 'UsrClass.dat' -Operation 'Prepare hive' -Status 'Skipped' -ToolId "$safeUserName/UsrClass/Prepare hive" -Description 'Prepare UsrClass.dat' -SourcePath $profile.UsrClassPath -OutputDirectory $workingsDirectory -Message "UsrClass.dat was not found for user $safeUserName."
+            $preparedHives += $issue
+            Write-IbisUserArtifactProgressResult -Result $issue @progressSplat
         }
 
         $jumpListOutput = Join-Path $userOutputDirectory 'JumpLists'
         $recentLnkOutput = Join-Path $userOutputDirectory 'RecentLNKs'
         $shellBagOutput = Join-Path $userOutputDirectory 'ShellBags'
-        $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'JumpLists' -Operation 'Run JLECmd' -ToolId 'zimmerman-jlecmd' -Description 'JLECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $jumpListOutput -ScriptBlock {
+        $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'JumpLists' -Operation 'Run JLECmd' -ToolId 'zimmerman-jlecmd' -Description 'JLECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $jumpListOutput -ScriptBlock {
             Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-jlecmd' -SourceDirectory $profile.RecentPath -OutputDirectory $jumpListOutput -ArgumentList @('-d', $profile.RecentPath, '--all', '--csv', $jumpListOutput, '--html', $jumpListOutput, '-q', '--fd') -Description 'JLECmd' -Hostname $safeHost -UserName $safeUserName
         }
-        $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'RecentLNKs' -Operation 'Run LECmd' -ToolId 'zimmerman-lecmd' -Description 'LECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $recentLnkOutput -ScriptBlock {
+        $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'RecentLNKs' -Operation 'Run LECmd' -ToolId 'zimmerman-lecmd' -Description 'LECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $recentLnkOutput -ScriptBlock {
             Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-lecmd' -SourceDirectory $profile.RecentPath -OutputDirectory $recentLnkOutput -ArgumentList @('-d', $profile.RecentPath, '--all', '--csv', $recentLnkOutput, '-q') -Description 'LECmd' -Hostname $safeHost -UserName $safeUserName
         }
-        $toolResults += Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'ShellBags' -Operation 'Run SBECmd' -ToolId 'zimmerman-sbecmd' -Description 'SBECmd' -SourceDirectory $profile.ProfilePath -OutputDirectory $shellBagOutput -ScriptBlock {
+        $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'ShellBags' -Operation 'Run SBECmd' -ToolId 'zimmerman-sbecmd' -Description 'SBECmd' -SourceDirectory $profile.ProfilePath -OutputDirectory $shellBagOutput -ScriptBlock {
             Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-sbecmd' -SourceDirectory $profile.ProfilePath -OutputDirectory $shellBagOutput -ArgumentList @('-d', $profile.ProfilePath, '--csv', $shellBagOutput) -Description 'SBECmd' -Hostname $safeHost -UserName $safeUserName
         }
 
         $psReadLineOutput = Join-Path $userOutputDirectory 'PSReadLine'
-        $psReadLineResult = Invoke-IbisUserArtifactStep -UserName $safeUserName -Artifact 'PSReadLine' -Operation 'Copy history' -ToolId 'psreadline' -Description 'PSReadLine' -SourceDirectory $profile.PSReadLinePath -OutputDirectory $psReadLineOutput -ScriptBlock {
+        $psReadLineResult = Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'PSReadLine' -Operation 'Copy history' -ToolId 'psreadline' -Description 'PSReadLine' -SourceDirectory $profile.PSReadLinePath -OutputDirectory $psReadLineOutput -ScriptBlock {
             Copy-IbisPSReadLineHistory -SourceDirectory $profile.PSReadLinePath -OutputDirectory $psReadLineOutput -Hostname $safeHost -UserName $safeUserName
         }
 
@@ -5382,7 +5477,7 @@ function Invoke-IbisBrowsingHistoryView {
                 $status = 'Completed With Warnings'
                 $message = 'BrowsingHistoryView completed, but the expected CSV was not found.'
             }
-            elseif ((Get-Item -LiteralPath $outputPath).Length -eq 0) {
+            elseif ((Get-Item -LiteralPath $outputPath -Force).Length -eq 0) {
                 $status = 'Completed With Warnings'
                 $message = 'BrowsingHistoryView output CSV was created, but it is empty.'
             }

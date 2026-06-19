@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.5`
+Current version: `v0.6.6`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -70,6 +70,8 @@ Ibis expects the source root to resemble the root of a Windows volume or a prese
 Velociraptor collections are also supported where artefacts are stored below uploaded paths such as `uploads\auto\C%3A` and NTFS special files below `uploads\ntfs\%5C%5C.%5CC%3A`.
 
 Missing artefacts are normal. Ibis usually records those modules as `Skipped` rather than treating the whole run as failed.
+
+Ibis uses hidden-aware file and directory discovery where it enumerates artefacts, because hidden files and folders can be relevant to forensic analysis.
 
 ## Output Layout
 
@@ -140,7 +142,7 @@ Runs SrumECmd against `Windows\System32\sru\SRUDB.dat` with a prepared `SOFTWARE
 
 ### User Artefacts
 
-Processes all discovered user profile folders, including default/system profiles. Modules include RegRipper user hive output, Jump Lists, Recent LNKs, ShellBags, PSReadLine history, Run keys, and UserAssist. User artefact processing isolates failures per user and artefact so a failure in one parser does not stop later artefacts or later user profiles.
+Processes all discovered user profile folders, including default/system profiles. Modules include RegRipper user hive output, Jump Lists, Recent LNKs, ShellBags, PSReadLine history, Run keys, and UserAssist. User artefact processing isolates failures per user and artefact so a failure in one parser does not stop later artefacts or later user profiles. Progress/log entries are emitted as each user artefact step runs, keeping each profile's entries together before the next profile starts.
 
 ### Windows Event Logs
 
@@ -226,6 +228,7 @@ Logs include:
 - Command line hints for external tools.
 - Concurrent stdout/stderr capture for external tools so noisy tools do not hang on full output pipes.
 - Move/rename hints emitted during the relevant module rather than replayed at run completion.
+- User artefact progress emitted in profile order so per-user artefact entries remain grouped in the log.
 - File creation, move, rename, update, and removal audit events where Ibis performs them.
 - Shutdown entry when the GUI closes.
 
@@ -261,5 +264,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.5`, both test runs pass with `120` tests.
+As of `v0.6.6`, both test runs pass with `121` tests.
 

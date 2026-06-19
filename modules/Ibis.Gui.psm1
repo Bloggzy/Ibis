@@ -1401,7 +1401,7 @@ function Start-IbisProcessingRunspace {
                     'prefetch' { $result = Invoke-IbisPrefetch -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     'ntfs-metadata' { $result = Invoke-IbisNtfsMetadata -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     'srum' { $result = Invoke-IbisSrum -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
-                    'user-artifacts' { $result = Invoke-IbisUserArtifacts -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
+                    'user-artifacts' { $result = Invoke-IbisUserArtifacts -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname -ProgressPath $ProgressPath -ProgressIndex $index -ProgressTotal $total }
                     'eventlogs' { $result = Invoke-IbisEvtxECmdEventLogs -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     'duckdb-eventlogs' { $result = Invoke-IbisDuckDbEventLogSummary -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -OutputRoot $currentOutputRoot -Hostname $currentHostname -ProjectRoot $ProjectRoot }
                     'hayabusa' { $result = Invoke-IbisHayabusaEventLogs -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
@@ -1423,8 +1423,10 @@ function Start-IbisProcessingRunspace {
                     }
 
                     Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Completed' -Message "$($result.ModuleId): $($result.Status) - $($result.Message)" -Index $index -Total $total -Status $result.Status
-                    Write-IbisProcessingCommandLineHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
-                    Write-IbisProcessingFileOperationHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
+                    if ($moduleId -ne 'user-artifacts') {
+                        Write-IbisProcessingCommandLineHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
+                        Write-IbisProcessingFileOperationHints -Result $result -ModuleId $moduleId -ModuleName $moduleName -Index $index -Total $total
+                    }
                     if ($result.OutputPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputPath -Index $index -Total $total -Status 'Info' }
                     if ($result.OutputDirectory) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Output' -Message $result.OutputDirectory -Index $index -Total $total -Status 'Info' }
                     if ($result.JsonPath) { Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Summary' -Message $result.JsonPath -Index $index -Total $total -Status 'Info' }
