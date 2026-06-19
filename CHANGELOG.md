@@ -4,6 +4,14 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.5 - 2026-06-19
+
+- Hardened User artefact processing so a failure in one user profile artefact does not stop later artefacts for the same user or later user profiles.
+- Added per-user/per-artefact failed and skipped result records for NTUSER.dat, UsrClass.dat, Jump Lists, Recent LNKs, ShellBags, and PSReadLine processing.
+- Updated processing summaries so nested skipped tool/artefact records are reported even when the parent processing module failed or completed with warnings.
+- Added a regression test for an external user artefact tool launch failure on the first user profile while later profile artefacts continue processing.
+- Added a regression test for a missing target artefact path in the first user profile while later artefacts and profiles continue processing.
+
 ## v0.6.4 - 2026-05-07
 
 - Changed processing file move/rename hint logging so move records are emitted through the background progress log as each module completes, instead of being replayed in one batch at the end of the run.

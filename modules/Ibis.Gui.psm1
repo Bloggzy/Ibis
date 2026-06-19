@@ -240,6 +240,9 @@ function Get-IbisFailedToolResult {
             if ($Value.Contains('Status') -and [string]$Value['Status'] -eq 'Failed') {
                 $failed.Add([pscustomobject]@{
                     ToolId = [string]$Value['ToolId']
+                    UserName = [string]$Value['UserName']
+                    Artifact = [string]$Value['Artifact']
+                    Operation = [string]$Value['Operation']
                     Message = [string]$Value['Message']
                     Status = [string]$Value['Status']
                 })
@@ -262,9 +265,15 @@ function Get-IbisFailedToolResult {
         if ($statusProperty -and [string]$statusProperty.Value -eq 'Failed') {
             $toolIdProperty = $properties | Where-Object { $_.Name -eq 'ToolId' } | Select-Object -First 1
             $messageProperty = $properties | Where-Object { $_.Name -eq 'Message' } | Select-Object -First 1
+            $userNameProperty = $properties | Where-Object { $_.Name -eq 'UserName' } | Select-Object -First 1
+            $artifactProperty = $properties | Where-Object { $_.Name -eq 'Artifact' } | Select-Object -First 1
+            $operationProperty = $properties | Where-Object { $_.Name -eq 'Operation' } | Select-Object -First 1
             if ($toolIdProperty) {
                 $failed.Add([pscustomobject]@{
                     ToolId = [string]$toolIdProperty.Value
+                    UserName = [string]$userNameProperty.Value
+                    Artifact = [string]$artifactProperty.Value
+                    Operation = [string]$operationProperty.Value
                     Message = [string]$messageProperty.Value
                     Status = [string]$statusProperty.Value
                 })
@@ -313,6 +322,9 @@ function Get-IbisSkippedToolResult {
             if ($Value.Contains('Status') -and [string]$Value['Status'] -eq 'Skipped') {
                 $skipped.Add([pscustomobject]@{
                     ToolId = [string]$Value['ToolId']
+                    UserName = [string]$Value['UserName']
+                    Artifact = [string]$Value['Artifact']
+                    Operation = [string]$Value['Operation']
                     Message = [string]$Value['Message']
                     Status = [string]$Value['Status']
                 })
@@ -335,9 +347,15 @@ function Get-IbisSkippedToolResult {
         if ($statusProperty -and [string]$statusProperty.Value -eq 'Skipped') {
             $toolIdProperty = $properties | Where-Object { $_.Name -eq 'ToolId' } | Select-Object -First 1
             $messageProperty = $properties | Where-Object { $_.Name -eq 'Message' } | Select-Object -First 1
+            $userNameProperty = $properties | Where-Object { $_.Name -eq 'UserName' } | Select-Object -First 1
+            $artifactProperty = $properties | Where-Object { $_.Name -eq 'Artifact' } | Select-Object -First 1
+            $operationProperty = $properties | Where-Object { $_.Name -eq 'Operation' } | Select-Object -First 1
             if ($toolIdProperty) {
                 $skipped.Add([pscustomobject]@{
                     ToolId = [string]$toolIdProperty.Value
+                    UserName = [string]$userNameProperty.Value
+                    Artifact = [string]$artifactProperty.Value
+                    Operation = [string]$operationProperty.Value
                     Message = [string]$messageProperty.Value
                     Status = [string]$statusProperty.Value
                 })
@@ -389,43 +407,72 @@ function Format-IbisProcessingRunSummary {
 
             $lines.Add("- ${moduleName}: $message")
 
+            $seenFailureTools = @{}
             foreach ($toolFailure in @(Get-IbisFailedToolResult -InputObject $moduleResult.Result)) {
                 $toolName = [string]$toolFailure.ToolId
                 if ([string]::IsNullOrWhiteSpace($toolName)) {
                     continue
                 }
+                $toolContext = @(($toolFailure.UserName), ($toolFailure.Artifact), ($toolFailure.Operation)) |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+                if ($toolContext.Count -gt 0) {
+                    $toolName = "$toolName ($($toolContext -join ' / '))"
+                }
                 $toolMessage = [string]$toolFailure.Message
                 if ([string]::IsNullOrWhiteSpace($toolMessage)) {
                     $toolMessage = 'Tool reported Failed.'
                 }
+                $failureKey = "${toolName}|${toolMessage}"
+                if ($seenFailureTools.ContainsKey($failureKey)) {
+                    continue
+                }
+                $seenFailureTools[$failureKey] = $true
                 $lines.Add("  Tool ${toolName}: $toolMessage")
             }
         }
     }
 
-    if ($skippedModules.Count -gt 0) {
+    $modulesWithSkippedItems = @($moduleResults | Where-Object {
+            ($_.Result -and [string]$_.Result.Status -eq 'Skipped') -or
+            ($_.Result -and @(Get-IbisSkippedToolResult -InputObject $_.Result).Count -gt 0)
+        })
+
+    if ($modulesWithSkippedItems.Count -gt 0) {
         $lines.Add('Skipped items:')
-        foreach ($moduleResult in $skippedModules) {
+        foreach ($moduleResult in $modulesWithSkippedItems) {
             $moduleName = [string]$moduleResult.ModuleName
             if ([string]::IsNullOrWhiteSpace($moduleName)) {
                 $moduleName = [string]$moduleResult.ModuleId
             }
 
-            $message = [string]$moduleResult.Result.Message
-            if ([string]::IsNullOrWhiteSpace($message)) {
-                $message = 'No skip reason was provided.'
+            if ($moduleResult.Result -and [string]$moduleResult.Result.Status -eq 'Skipped') {
+                $message = [string]$moduleResult.Result.Message
+                if ([string]::IsNullOrWhiteSpace($message)) {
+                    $message = 'No skip reason was provided.'
+                }
+                $lines.Add("- ${moduleName}: $message")
             }
-            $lines.Add("- ${moduleName}: $message")
 
+            $seenSkippedTools = @{}
             foreach ($toolSkip in @(Get-IbisSkippedToolResult -InputObject $moduleResult.Result)) {
                 $toolName = [string]$toolSkip.ToolId
                 if ([string]::IsNullOrWhiteSpace($toolName)) {
                     continue
                 }
+                $toolContext = @(($toolSkip.UserName), ($toolSkip.Artifact), ($toolSkip.Operation)) |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+                if ($toolContext.Count -gt 0) {
+                    $toolName = "$toolName ($($toolContext -join ' / '))"
+                }
                 $toolMessage = [string]$toolSkip.Message
                 if ([string]::IsNullOrWhiteSpace($toolMessage)) {
                     $toolMessage = 'Tool reported Skipped.'
                 }
+                $skipKey = "${toolName}|${toolMessage}"
+                if ($seenSkippedTools.ContainsKey($skipKey)) {
+                    continue
+                }
+                $seenSkippedTools[$skipKey] = $true
                 $lines.Add("  Tool ${toolName}: $toolMessage")
             }
         }

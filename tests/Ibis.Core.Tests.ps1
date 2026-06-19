@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.4'
+        $config.version | Should Be '0.6.5'
     }
 
     It 'records release history in the changelog' {
@@ -106,6 +106,11 @@ Describe 'Ibis core configuration' {
                             ToolId = 'zimmerman-srumecmd'
                             Status = 'Failed'
                             Message = 'SrumECmd is missing.'
+                        },
+                        [pscustomobject]@{
+                            ToolId = 'srum-dependent-step'
+                            Status = 'Skipped'
+                            Message = 'Skipped because the required SRUM input was unavailable.'
                         }
                     )
                 }
@@ -127,6 +132,7 @@ Describe 'Ibis core configuration' {
         ($summary -join "`n") | Should Match 'SRUM: SrumECmd failed'
         ($summary -join "`n") | Should Match 'Tool zimmerman-srumecmd: SrumECmd is missing'
         ($summary -join "`n") | Should Match 'Skipped items:'
+        ($summary -join "`n") | Should Match 'Tool srum-dependent-step: Skipped because the required SRUM input was unavailable'
         ($summary -join "`n") | Should Match 'Prefetch: Prefetch folder was not found'
     }
 }
@@ -1563,6 +1569,101 @@ Describe 'Ibis SRUM and user artefacts' {
             Test-Path -LiteralPath (Join-Path $outputRoot 'Users\Alice\PSReadLine\Alice-PSReadLine-ConsoleHost_history.txt') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'Users\Default') | Should Be $true
             Test-Path -LiteralPath (Join-Path $outputRoot 'HOST') | Should Be $false
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'continues processing later user artefacts and profiles when one user tool throws' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        $toolsRoot = Join-Path $tempRoot 'Tools'
+        $badToolPath = Join-Path $toolsRoot 'bad-tool.txt'
+        $aliceRoot = Join-Path $sourceRoot 'Users\Alice'
+        $bobRoot = Join-Path $sourceRoot 'Users\Bob'
+        $aliceRecent = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $bobRecent = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $alicePsReadLine = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+        $bobPsReadLine = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+
+        New-Item -ItemType Directory -Path $aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine,$toolsRoot -Force | Out-Null
+        'not an executable' | Out-File -LiteralPath $badToolPath -Encoding ASCII
+        'Get-Date' | Out-File -LiteralPath (Join-Path $alicePsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+        'Get-Process' | Out-File -LiteralPath (Join-Path $bobPsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+
+        $toolDefinitions = @(
+            [pscustomobject]@{
+                id = 'zimmerman-jlecmd'
+                name = 'Bad JLECmd'
+                executablePath = 'bad-tool.txt'
+            }
+        )
+
+        try {
+            $result = Invoke-IbisUserArtifacts `
+                -ToolsRoot $toolsRoot `
+                -ToolDefinitions $toolDefinitions `
+                -SourceRoot $sourceRoot `
+                -OutputRoot $outputRoot `
+                -Hostname 'TESTHOST'
+
+            $result.Status | Should Be 'Failed'
+            $result.UserCount | Should Be 2
+            @($result.Users).Count | Should Be 2
+
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Alice\PSReadLine\TESTHOST-Alice-PSReadLine-ConsoleHost_history.txt') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Bob\PSReadLine\TESTHOST-Bob-PSReadLine-ConsoleHost_history.txt') | Should Be $true
+
+            $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
+            $bob = @($result.Users | Where-Object { $_.UserName -eq 'Bob' } | Select-Object -First 1)[0]
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-sbecmd' }).Count | Should Be 1
+            $alice.PSReadLine.Status | Should Be 'Completed'
+            $bob.PSReadLine.Status | Should Be 'Completed'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'continues processing later artefacts and profiles when the first user is missing a target artefact path' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        $aliceRoot = Join-Path $sourceRoot 'Users\Alice'
+        $bobRoot = Join-Path $sourceRoot 'Users\Bob'
+        $alicePsReadLine = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+        $bobRecent = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $bobPsReadLine = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+
+        New-Item -ItemType Directory -Path $alicePsReadLine,$bobRecent,$bobPsReadLine -Force | Out-Null
+        'Get-Date' | Out-File -LiteralPath (Join-Path $alicePsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+        'Get-Process' | Out-File -LiteralPath (Join-Path $bobPsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
+
+        try {
+            $result = Invoke-IbisUserArtifacts `
+                -ToolsRoot $tempRoot `
+                -ToolDefinitions @() `
+                -SourceRoot $sourceRoot `
+                -OutputRoot $outputRoot `
+                -Hostname 'TESTHOST'
+
+            $result.UserCount | Should Be 2
+
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Alice\PSReadLine\TESTHOST-Alice-PSReadLine-ConsoleHost_history.txt') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\Users\Bob\PSReadLine\TESTHOST-Bob-PSReadLine-ConsoleHost_history.txt') | Should Be $true
+
+            $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
+            $bob = @($result.Users | Where-Object { $_.UserName -eq 'Bob' } | Select-Object -First 1)[0]
+
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Skipped' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' -and $_.Status -eq 'Skipped' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-sbecmd' }).Count | Should Be 1
+            $alice.PSReadLine.Status | Should Be 'Completed'
+            $bob.PSReadLine.Status | Should Be 'Completed'
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force

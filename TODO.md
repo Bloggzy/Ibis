@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.4`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.5`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -48,6 +48,7 @@ This roadmap reflects the current state as of `v0.6.4`. The major first-pass pro
 - [x] Background processing runspace so the GUI stays responsive.
 - [x] Processing status/progress feedback.
 - [x] End-of-run processing summary highlighting failed and skipped modules/tools.
+- [x] End-of-run processing summary includes nested skipped artefacts/tools, not only wholly skipped modules.
 - [x] Pause/resume and cancel-before-next-module controls.
 - [x] Completion popup.
 - [x] Optional completion beep.
@@ -91,6 +92,7 @@ This roadmap reflects the current state as of `v0.6.4`. The major first-pass pro
 - [x] Emit processing command line hints through progress updates near the related module output.
 - [x] Treat absent artefact sources as skipped, not fatal.
 - [x] Treat missing tools as failed module results with summary JSON.
+- [x] Isolate User artefact processing failures per user and artefact so later artefacts/profiles continue.
 - [x] Capture stderr for failed external tools where practical.
 - [x] Capture external tool stdout/stderr concurrently to avoid pipe-buffer hangs.
 - [x] Create a date-stamped session log file.
@@ -137,7 +139,7 @@ This roadmap reflects the current state as of `v0.6.4`. The major first-pass pro
 - [ ] Confirm forensic-webhistory output naming and content on Velociraptor/KAPE style collections.
 - [ ] Confirm ParseUSBs output naming and useful CSV inventory with real evidence.
 - [ ] Confirm MFTECmd `$MFT` and `$J` discovery across mounted images and Velociraptor NTFS upload folders.
-- [ ] Confirm user artefact coverage for default/system profiles and regular user profiles.
+- [ ] Confirm user artefact coverage and per-user/per-artefact failure reporting for default/system profiles and regular user profiles.
 
 ## Hardening
 
