@@ -1750,7 +1750,7 @@ function Show-IbisGui {
 
     $runtimePrereqGroup = New-Object System.Windows.Forms.GroupBox
     $runtimePrereqGroup.Text = 'Runtime prerequisites'
-    $runtimePrereqGroup.Location = New-Object System.Drawing.Point(394, 180)
+    $runtimePrereqGroup.Location = New-Object System.Drawing.Point(394, 238)
     $runtimePrereqGroup.Size = New-Object System.Drawing.Size(362, 44)
     $setupTab.Controls.Add($runtimePrereqGroup)
 
@@ -1766,9 +1766,34 @@ function Show-IbisGui {
     $openVcRedistPageButton.Width = 112
     $runtimePrereqGroup.Controls.Add($openVcRedistPageButton)
 
+    $powerShellReadinessGroup = New-Object System.Windows.Forms.GroupBox
+    $powerShellReadinessGroup.Text = 'PowerShell readiness'
+    $powerShellReadinessGroup.Location = New-Object System.Drawing.Point(394, 180)
+    $powerShellReadinessGroup.Size = New-Object System.Drawing.Size(362, 50)
+    $setupTab.Controls.Add($powerShellReadinessGroup)
+
+    $powerShellReadinessStatusLabel = New-Object System.Windows.Forms.Label
+    $powerShellReadinessStatusLabel.Location = New-Object System.Drawing.Point(12, 20)
+    $powerShellReadinessStatusLabel.Size = New-Object System.Drawing.Size(118, 18)
+    $powerShellReadinessStatusLabel.Text = 'Checking...'
+    $powerShellReadinessGroup.Controls.Add($powerShellReadinessStatusLabel)
+
+    $checkPowerShellReadinessButton = New-Object System.Windows.Forms.Button
+    $checkPowerShellReadinessButton.Text = 'Recheck'
+    $checkPowerShellReadinessButton.Location = New-Object System.Drawing.Point(136, 15)
+    $checkPowerShellReadinessButton.Width = 82
+    $powerShellReadinessGroup.Controls.Add($checkPowerShellReadinessButton)
+
+    $unblockIbisFilesButton = New-Object System.Windows.Forms.Button
+    $unblockIbisFilesButton.Text = 'Unblock Ibis Files'
+    $unblockIbisFilesButton.Location = New-Object System.Drawing.Point(226, 15)
+    $unblockIbisFilesButton.Width = 122
+    $unblockIbisFilesButton.Enabled = $false
+    $powerShellReadinessGroup.Controls.Add($unblockIbisFilesButton)
+
     $toolList = New-Object System.Windows.Forms.ListView
-    $toolList.Location = New-Object System.Drawing.Point(12, 236)
-    $toolList.Size = New-Object System.Drawing.Size(744, 150)
+    $toolList.Location = New-Object System.Drawing.Point(12, 294)
+    $toolList.Size = New-Object System.Drawing.Size(744, 92)
     $toolList.View = 'Details'
     $toolList.FullRowSelect = $true
     $toolList.GridLines = $true
@@ -2127,6 +2152,9 @@ function Show-IbisGui {
     }
     $processingPollTimer = New-Object System.Windows.Forms.Timer
     $processingPollTimer.Interval = 750
+    $powerShellReadinessState = @{
+        Result = $null
+    }
 
     $appendDownloadProgress = {
         if ([string]::IsNullOrWhiteSpace($downloadState.ProgressPath)) {
@@ -2221,6 +2249,34 @@ function Show-IbisGui {
         $vcStatus
     }
 
+    $updatePowerShellReadiness = {
+        param(
+            [bool]$WriteOutput = $false
+        )
+
+        $readinessResult = Get-IbisPowerShellReadiness -ProjectRoot $ProjectRoot
+        $powerShellReadinessState.Result = $readinessResult
+        $powerShellReadinessStatusLabel.Text = $readinessResult.Status
+        if ($readinessResult.Status -eq 'Ready') {
+            $powerShellReadinessStatusLabel.ForeColor = [System.Drawing.Color]::DarkGreen
+        }
+        elseif ($readinessResult.Status -eq 'Warning') {
+            $powerShellReadinessStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+        }
+        else {
+            $powerShellReadinessStatusLabel.ForeColor = [System.Drawing.Color]::DarkRed
+        }
+        $unblockIbisFilesButton.Enabled = ($readinessResult.MarkedFiles.Count -gt 0)
+
+        foreach ($guidanceLine in $readinessResult.Guidance) {
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "PowerShell readiness: $guidanceLine"
+        }
+        if ($WriteOutput) {
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text ($readinessResult.Guidance -join "`r`n") -StripAnsi
+        }
+        $readinessResult
+    }
+
     $setDefenderControlsForAdmin = {
         $isAdministrator = Test-IbisIsAdministrator
         $checkDefenderExclusionsButton.Enabled = $isAdministrator
@@ -2240,6 +2296,7 @@ function Show-IbisGui {
     & $setDefenderControlsForAdmin
     & $updateToolsFolderButtonState
     [void](& $updateVcRedistStatus)
+    [void](& $updatePowerShellReadiness)
 
     $updateModuleDependencies = {
         if ($moduleCheckboxById.ContainsKey('hayabusa') -and $moduleCheckboxById.ContainsKey('takajo')) {
@@ -2551,6 +2608,39 @@ function Show-IbisGui {
         & $refreshToolStatusList
     })
 
+    $checkPowerShellReadinessButton.Add_Click({
+        $readiness = & $updatePowerShellReadiness -WriteOutput $true
+        $statusLabel.Text = "PowerShell readiness: $($readiness.Status)"
+    })
+
+    $unblockIbisFilesButton.Add_Click({
+        if ($null -eq $powerShellReadinessState.Result -or $powerShellReadinessState.Result.MarkedFiles.Count -eq 0) {
+            $statusLabel.Text = 'No marked Ibis files found'
+            return
+        }
+
+        $fileList = ($powerShellReadinessState.Result.MarkedFiles | ForEach-Object { $_.Path }) -join "`r`n"
+        $choice = [System.Windows.Forms.MessageBox]::Show(
+            "Remove the internet-origin mark from these trusted local Ibis files?`r`n`r`n$fileList`r`n`r`nThis does not change PowerShell execution policy or organisational security controls.",
+            'Unblock Ibis Files',
+            'YesNo',
+            'Warning'
+        )
+        if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+            $statusLabel.Text = 'Unblock Ibis files cancelled'
+            return
+        }
+
+        $results = @(Unblock-IbisProjectScriptFile -ProjectRoot $ProjectRoot)
+        $messages = @($results | ForEach-Object { "$($_.Status): $($_.Path) - $($_.Message)" })
+        Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text ($messages -join "`r`n") -StripAnsi
+        foreach ($message in $messages) {
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "PowerShell readiness: $message"
+        }
+        $readiness = & $updatePowerShellReadiness
+        $statusLabel.Text = "PowerShell readiness: $($readiness.Status)"
+    })
+
     $toolGuidanceButton.Add_Click({
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
         $plan = @(Get-IbisToolAcquisitionPlan -ToolStatuses $statuses)
@@ -2810,6 +2900,21 @@ function Show-IbisGui {
     $downloadMissingToolsButton.Add_Click({
         if ($null -ne $downloadState.Operation) {
             $statusLabel.Text = 'Tool download already running'
+            return
+        }
+
+        $readiness = & $updatePowerShellReadiness
+        if (-not $readiness.CanStartBackgroundWork) {
+            $readinessText = $readiness.Guidance -join "`r`n"
+            Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $readinessText -StripAnsi
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message 'Tool download was not started because the PowerShell readiness check failed.'
+            [System.Windows.Forms.MessageBox]::Show(
+                "Ibis could not start the same background PowerShell environment used for downloads.`r`n`r`n$readinessText`r`n`r`nResolve the reported PowerShell policy or application-control issue, then select Recheck.",
+                'PowerShell Readiness Blocks Download',
+                'OK',
+                'Error'
+            ) | Out-Null
+            $statusLabel.Text = 'Tool download blocked by PowerShell readiness'
             return
         }
 

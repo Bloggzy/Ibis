@@ -841,6 +841,197 @@ function Get-IbisVisualCppRedistributableStatus {
     }
 }
 
+function Get-IbisProjectScriptFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    @(
+        (Join-Path $ProjectRoot 'Run-Ibis.ps1'),
+        (Join-Path $ProjectRoot 'modules\Ibis.Core.psm1'),
+        (Join-Path $ProjectRoot 'modules\Ibis.Gui.psm1')
+    )
+}
+
+function Get-IbisPowerShellReadiness {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    $projectFiles = @(Get-IbisProjectScriptFile -ProjectRoot $ProjectRoot)
+    $executionPolicies = @()
+    $policyError = $null
+    try {
+        $executionPolicies = @(Get-ExecutionPolicy -List -ErrorAction Stop | ForEach-Object {
+            [pscustomobject]@{
+                Scope = [string]$_.Scope
+                ExecutionPolicy = [string]$_.ExecutionPolicy
+            }
+        })
+    }
+    catch {
+        $policyError = $_.Exception.Message
+    }
+
+    $effectivePolicy = $null
+    try {
+        $effectivePolicy = [string](Get-ExecutionPolicy -ErrorAction Stop)
+    }
+    catch {
+        if ([string]::IsNullOrWhiteSpace($policyError)) {
+            $policyError = $_.Exception.Message
+        }
+    }
+
+    $enforcedPolicy = @($executionPolicies | Where-Object {
+        $_.Scope -in @('MachinePolicy', 'UserPolicy') -and $_.ExecutionPolicy -ne 'Undefined'
+    })
+
+    $fileStatuses = @()
+    foreach ($projectFile in $projectFiles) {
+        $exists = Test-Path -LiteralPath $projectFile -PathType Leaf
+        $zoneIdentifier = $null
+        if ($exists) {
+            try {
+                $zoneIdentifier = Get-Content -LiteralPath ($projectFile + ':Zone.Identifier') -Raw -ErrorAction Stop
+            }
+            catch {
+            }
+        }
+
+        $fileStatuses += [pscustomobject]@{
+            Path = $projectFile
+            Exists = $exists
+            HasZoneIdentifier = -not [string]::IsNullOrWhiteSpace($zoneIdentifier)
+            ZoneIdentifier = $zoneIdentifier
+        }
+    }
+
+    $backgroundImport = [pscustomobject]@{
+        Passed = $false
+        ErrorMessage = $null
+        ErrorRecords = @()
+    }
+    $coreModulePath = Join-Path $ProjectRoot 'modules\Ibis.Core.psm1'
+    if (Test-Path -LiteralPath $coreModulePath -PathType Leaf) {
+        $backgroundPowerShell = [PowerShell]::Create()
+        try {
+            $importScript = {
+                param([string]$ModulePath)
+                $ErrorActionPreference = 'Stop'
+                Import-Module -Name $ModulePath -Force -ErrorAction Stop
+                'Ibis core module import passed.'
+            }
+            [void]$backgroundPowerShell.AddScript($importScript)
+            [void]$backgroundPowerShell.AddArgument($coreModulePath)
+            $handle = $backgroundPowerShell.BeginInvoke()
+            try {
+                [void]$backgroundPowerShell.EndInvoke($handle)
+                $backgroundImport.Passed = -not $backgroundPowerShell.HadErrors
+            }
+            catch {
+                $backgroundImport.ErrorMessage = $_.Exception.Message
+            }
+
+            $backgroundImport.ErrorRecords = @($backgroundPowerShell.Streams.Error | ForEach-Object { $_.ToString() })
+            if (-not $backgroundImport.Passed -and $backgroundImport.ErrorRecords.Count -gt 0) {
+                $backgroundImport.ErrorMessage = $backgroundImport.ErrorRecords[0]
+            }
+        }
+        catch {
+            $backgroundImport.ErrorMessage = $_.Exception.Message
+        }
+        finally {
+            $backgroundPowerShell.Dispose()
+        }
+    }
+    else {
+        $backgroundImport.ErrorMessage = "Ibis core module was not found at: $coreModulePath"
+    }
+
+    $guidance = @()
+    if ($enforcedPolicy.Count -gt 0) {
+        $policyNames = ($enforcedPolicy | ForEach-Object { "$($_.Scope)=$($_.ExecutionPolicy)" }) -join ', '
+        $guidance += "PowerShell execution policy is enforced by policy: $policyNames. Ibis cannot override Group Policy; ask IT to allow or sign Ibis."
+    }
+    elseif ($effectivePolicy -in @('AllSigned', 'Restricted')) {
+        $guidance += "Effective PowerShell execution policy is $effectivePolicy. This can block Ibis modules or background work. Relaunch with an approved process-only execution policy, or ask IT for guidance."
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($policyError)) {
+        $guidance += "Unable to determine the effective PowerShell execution policy: $policyError"
+    }
+
+    $markedFiles = @($fileStatuses | Where-Object { $_.HasZoneIdentifier })
+    if ($markedFiles.Count -gt 0) {
+        $guidance += "$($markedFiles.Count) Ibis PowerShell file(s) are marked as downloaded from the internet. After verifying this trusted checkout, use Unblock Ibis Files."
+    }
+    if (-not $backgroundImport.Passed) {
+        $guidance += "Background PowerShell import failed: $($backgroundImport.ErrorMessage)"
+    }
+    if ($guidance.Count -eq 0) {
+        $guidance += 'PowerShell readiness passed. Ibis can start its background tool download runspace.'
+    }
+
+    [pscustomobject]@{
+        Status = if ($backgroundImport.Passed -and $guidance.Count -eq 1 -and $guidance[0] -like 'PowerShell readiness passed*') { 'Ready' } elseif ($backgroundImport.Passed) { 'Warning' } else { 'Blocked' }
+        CanStartBackgroundWork = $backgroundImport.Passed
+        EffectiveExecutionPolicy = $effectivePolicy
+        ExecutionPolicies = $executionPolicies
+        EnforcedPolicies = $enforcedPolicy
+        PolicyError = $policyError
+        Files = $fileStatuses
+        MarkedFiles = $markedFiles
+        BackgroundImport = $backgroundImport
+        Guidance = $guidance
+    }
+}
+
+function Unblock-IbisProjectScriptFile {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    foreach ($projectFile in @(Get-IbisProjectScriptFile -ProjectRoot $ProjectRoot)) {
+        $hasZoneIdentifier = $false
+        if (Test-Path -LiteralPath $projectFile -PathType Leaf) {
+            try {
+                $hasZoneIdentifier = -not [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath ($projectFile + ':Zone.Identifier') -Raw -ErrorAction Stop))
+            }
+            catch {
+            }
+        }
+
+        $status = 'Skipped'
+        $message = 'File is not marked as downloaded from the internet.'
+        if (-not (Test-Path -LiteralPath $projectFile -PathType Leaf)) {
+            $message = 'File was not found.'
+        }
+        elseif ($hasZoneIdentifier -and $PSCmdlet.ShouldProcess($projectFile, 'Remove internet-origin mark from trusted Ibis file')) {
+            try {
+                Unblock-File -LiteralPath $projectFile -ErrorAction Stop
+                $status = 'Unblocked'
+                $message = 'Removed the internet-origin mark.'
+            }
+            catch {
+                $status = 'Failed'
+                $message = $_.Exception.Message
+            }
+        }
+
+        [pscustomobject]@{
+            Path = $projectFile
+            Status = $status
+            Message = $message
+        }
+    }
+}
+
 function New-IbisToolInstallWorkspace {
     [CmdletBinding()]
     param(
@@ -6142,6 +6333,8 @@ Export-ModuleMember -Function Expand-IbisArchive
 Export-ModuleMember -Function Get-IbisLongPathsEnabled
 Export-ModuleMember -Function Set-IbisLongPathsEnabled
 Export-ModuleMember -Function Get-IbisVisualCppRedistributableStatus
+Export-ModuleMember -Function Get-IbisPowerShellReadiness
+Export-ModuleMember -Function Unblock-IbisProjectScriptFile
 Export-ModuleMember -Function New-IbisToolInstallWorkspace
 Export-ModuleMember -Function Get-IbisToolPublishSource
 Export-ModuleMember -Function Backup-IbisToolInstallDirectory

@@ -4,6 +4,13 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.6.7 - 2026-07-17
+
+- Added a PowerShell readiness check on the Setup tools tab that runs automatically and can be rechecked on demand.
+- Checks execution-policy scopes, Group Policy enforcement, internet-origin marks on Ibis PowerShell files, and a fresh background-runspace import of `Ibis.Core.psm1` before downloads begin.
+- Blocks a tool download before it starts when the background runspace cannot import Ibis, and shows the child PowerShell error instead of only the `EndInvoke` wrapper.
+- Added an explicit, confirmation-gated action to remove internet-origin marks from trusted local Ibis PowerShell files. Ibis does not change execution policy or bypass Group Policy, AppLocker, or WDAC.
+
 ## v0.6.6 - 2026-06-19
 
 - Added ordered per-user progress logging inside User artefact processing so log entries for each profile are emitted as each artefact is processed before moving to the next profile.

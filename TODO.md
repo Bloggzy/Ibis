@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.6`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.7`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -70,6 +70,7 @@ This roadmap reflects the current state as of `v0.6.6`. The major first-pass pro
 - [x] Avoid extracting Defender-sensitive tools under `%TEMP%`.
 - [x] Admin-only Windows long path support enable/disable controls.
 - [x] Visual C++ Redistributable 2015+ x64 prerequisite check and Microsoft documentation/download link.
+- [x] PowerShell readiness check for background tool downloads, including execution policy, internet-origin marks, and fresh-runspace module import.
 - [x] Partial install detection.
 - [x] Backup conflicting staged items before publish.
 - [x] Avoid backing up unrelated tools in shared EZTools folder.

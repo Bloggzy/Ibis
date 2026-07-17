@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.6'
+        $config.version | Should Be '0.6.7'
     }
 
     It 'records release history in the changelog' {
@@ -81,6 +81,31 @@ Describe 'Ibis core configuration' {
         $status.MicrosoftUrl | Should Match 'latest-supported-vc-redist'
         [string]::IsNullOrWhiteSpace([string]$status.Message) | Should Be $false
         $status.PSObject.Properties.Name -contains 'Present' | Should Be $true
+    }
+
+    It 'checks that a fresh background PowerShell runspace can import Ibis core' {
+        $readiness = Get-IbisPowerShellReadiness -ProjectRoot $projectRoot
+
+        $readiness.Files.Count | Should Be 3
+        @($readiness.Files | Where-Object { -not $_.Exists }).Count | Should Be 0
+        $readiness.BackgroundImport.Passed | Should Be $true
+        $readiness.CanStartBackgroundWork | Should Be $true
+        $readiness.Status | Should Not Be 'Blocked'
+    }
+
+    It 'blocks background work when the Ibis core module is absent' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            $readiness = Get-IbisPowerShellReadiness -ProjectRoot $tempRoot
+
+            $readiness.Status | Should Be 'Blocked'
+            $readiness.CanStartBackgroundWork | Should Be $false
+            $readiness.BackgroundImport.ErrorMessage | Should Match 'Ibis core module was not found'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
 
     It 'formats processing run summaries with failed module details' {

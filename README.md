@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.6`
+Current version: `v0.6.7`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -47,7 +47,7 @@ Typical workflow:
 ## GUI Tabs
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
-- `Setup tools`: tools folder, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
+- `Setup tools`: tools folder, PowerShell readiness checks, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel-before-next-module.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
@@ -206,6 +206,8 @@ Some tools require the Microsoft Visual C++ Redistributable 2015+ x64 runtime. I
 winget install -e --id Microsoft.VCRedist.2015+.x64
 ```
 
+Before downloads, Ibis checks that a fresh background PowerShell runspace can import its core module. The Setup tools tab also identifies execution-policy warnings and internet-origin marks on Ibis files. When a trusted local checkout is marked as downloaded from the internet, Ibis can remove that mark after confirmation. Ibis will not change execution policy or attempt to bypass Group Policy or application-control policy.
+
 ## Defender Exclusions
 
 Tools and rule sets such as Chainsaw, Hayabusa, and Takajo may trigger Defender false positives. The `Setup tools` tab can check, add, and remove recommended folder exclusions based on tool metadata.
@@ -264,5 +266,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.6`, both test runs pass with `121` tests.
+As of `v0.6.7`, both test runs pass with `123` tests.
 
