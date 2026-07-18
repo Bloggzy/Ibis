@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.7'
+        $config.version | Should Be '0.6.8'
     }
 
     It 'records release history in the changelog' {
@@ -452,6 +452,54 @@ Describe 'Ibis staged tool installs' {
         }
     }
 
+    It 'assesses a single versioned executable as needing normalization' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $installRoot = Join-Path $tempRoot 'Hayabusa'
+        New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+        'versioned' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa-3.10.0-win-x64.exe') -Encoding ASCII
+        $tool = [pscustomobject]@{
+            id = 'hayabusa'
+            name = 'Hayabusa'
+            executablePath = 'Hayabusa\hayabusa.exe'
+            installDirectory = 'Hayabusa'
+            renameExecutablePattern = 'hayabusa*x64.exe'
+            renameExecutableTo = 'hayabusa.exe'
+        }
+
+        try {
+            $assessment = Get-IbisToolInstallAssessment -ToolsRoot $tempRoot -ToolDefinition $tool
+            $assessment.Status | Should Be 'Needs Normalization'
+            $assessment.VersionedExecutables.Count | Should Be 1
+            $assessment.VersionedExecutables[0].Name | Should Be 'hayabusa-3.10.0-win-x64.exe'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports multiple versioned executables as ambiguous' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $installRoot = Join-Path $tempRoot 'Hayabusa'
+        New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+        'old' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa-3.9.0-win-x64.exe') -Encoding ASCII
+        'new' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa-3.10.0-win-x64.exe') -Encoding ASCII
+        $tool = [pscustomobject]@{
+            id = 'hayabusa'
+            name = 'Hayabusa'
+            executablePath = 'Hayabusa\hayabusa.exe'
+            installDirectory = 'Hayabusa'
+            renameExecutablePattern = 'hayabusa*x64.exe'
+            renameExecutableTo = 'hayabusa.exe'
+        }
+
+        try {
+            (Get-IbisToolInstallAssessment -ToolsRoot $tempRoot -ToolDefinition $tool).Status | Should Be 'Ambiguous Existing Versions'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'creates Defender-sensitive staging under the install directory' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $tool = [pscustomobject]@{
@@ -475,6 +523,27 @@ Describe 'Ibis staged tool installs' {
             if (Test-Path -LiteralPath $tempRoot) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }
+        }
+    }
+
+    It 'removes only empty legacy and Defender-aware workspace folders' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $installRoot = Join-Path $tempRoot 'Hayabusa'
+        New-Item -ItemType Directory -Path (Join-Path $installRoot '_s') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $installRoot '_ibis-staging') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $installRoot '_ibis-backup\keep') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $installRoot 'rules') -Force | Out-Null
+        'rule' | Out-File -LiteralPath (Join-Path $installRoot 'rules\rule.yml') -Encoding ASCII
+
+        try {
+            Remove-IbisEmptyToolWorkspaceDirectory -InstallDirectory $installRoot
+            Test-Path -LiteralPath (Join-Path $installRoot '_s') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $installRoot '_ibis-staging') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $installRoot '_ibis-backup') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $installRoot 'rules\rule.yml') | Should Be $true
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
 
@@ -561,9 +630,11 @@ Describe 'Ibis staged tool installs' {
         New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $installRoot '_ibis-backup\old') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $installRoot '_ibis-staging\current') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $installRoot '_s\current') -Force | Out-Null
         'live' | Out-File -LiteralPath (Join-Path $installRoot 'chainsaw_x86_64-pc-windows-msvc.exe') -Encoding ASCII
         'backup' | Out-File -LiteralPath (Join-Path $installRoot '_ibis-backup\old\chainsaw_x86_64-pc-windows-msvc.exe') -Encoding ASCII
         'staging' | Out-File -LiteralPath (Join-Path $installRoot '_ibis-staging\current\chainsaw_x86_64-pc-windows-msvc.exe') -Encoding ASCII
+        'workspace' | Out-File -LiteralPath (Join-Path $installRoot '_s\current\chainsaw_x86_64-pc-windows-msvc.exe') -Encoding ASCII
 
         try {
             $renameCandidates = @(Get-IbisExecutableRenameCandidate -InstallDirectory $installRoot -Pattern 'chainsaw_x86_64-pc-windows-msvc.exe')
@@ -593,6 +664,57 @@ Describe 'Ibis staged tool installs' {
             Invoke-IbisToolPostInstall -ToolsRoot $tempRoot -ToolDefinition $tool
             Test-Path -LiteralPath (Join-Path $installRoot 'chainsaw.exe') | Should Be $true
             Test-Path -LiteralPath (Join-Path $installRoot 'chainsaw_x86_64-pc-windows-msvc.exe') | Should Be $false
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renames the executable from the staged release when older versions remain' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $installRoot = Join-Path $tempRoot 'Hayabusa'
+        New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+        'old' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa-3.9.0-win-x64.exe') -Encoding ASCII
+        'new' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa-3.10.0-win-x64.exe') -Encoding ASCII
+        $tool = [pscustomobject]@{
+            id = 'hayabusa'
+            name = 'Hayabusa'
+            executablePath = 'Hayabusa\hayabusa.exe'
+            installDirectory = 'Hayabusa'
+            renameExecutablePattern = 'hayabusa*x64.exe'
+            renameExecutableTo = 'hayabusa.exe'
+        }
+
+        try {
+            Invoke-IbisToolPostInstall -ToolsRoot $tempRoot -ToolDefinition $tool -PublishedExecutableRelativePath 'hayabusa-3.10.0-win-x64.exe'
+            (Get-Content -LiteralPath (Join-Path $installRoot 'hayabusa.exe')) | Should Be 'new'
+            Test-Path -LiteralPath (Join-Path $installRoot 'hayabusa-3.9.0-win-x64.exe') | Should Be $true
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'archives a dedicated tool folder before reinstalling it' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $installRoot = Join-Path $tempRoot 'Hayabusa'
+        New-Item -ItemType Directory -Path (Join-Path $installRoot 'rules') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $installRoot '_s\active') -Force | Out-Null
+        'old' | Out-File -LiteralPath (Join-Path $installRoot 'hayabusa.exe') -Encoding ASCII
+        'rule' | Out-File -LiteralPath (Join-Path $installRoot 'rules\rule.yml') -Encoding ASCII
+        'workspace' | Out-File -LiteralPath (Join-Path $installRoot '_s\active\keep.txt') -Encoding ASCII
+        $tool = [pscustomobject]@{
+            id = 'hayabusa'
+            name = 'Hayabusa'
+            executablePath = 'Hayabusa\hayabusa.exe'
+            installDirectory = 'Hayabusa'
+        }
+
+        try {
+            $backup = Clear-IbisToolPreviousInstall -ToolsRoot $tempRoot -ToolDefinition $tool
+            Test-Path -LiteralPath (Join-Path $backup 'hayabusa.exe') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $backup 'rules\rule.yml') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $installRoot '_s\active\keep.txt') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force

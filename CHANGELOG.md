@@ -3,6 +3,13 @@
 All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
+## v0.6.8 - 2026-07-18
+
+- Added tool install assessments that distinguish missing installs, a single versioned executable needing normalization, multiple ambiguous legacy executables, partial installs, and canonical installs with legacy files still present.
+- Fixed versioned executable installs for Hayabusa and Takajo by selecting the executable from the newly staged release before publishing, rather than allowing old versioned binaries to make the post-install rename ambiguous.
+- Added a confirmation-gated `Reinstall Selected` action on the Setup tools tab. It downloads the latest configured source and archives the active contents of a dedicated tool folder under `_ibis-backup` before publishing the new release.
+- Preserved shared `EZTools` installations during forced reinstalls: Ibis does not clear the shared directory wholesale.
+
 
 ## v0.6.7 - 2026-07-17
 

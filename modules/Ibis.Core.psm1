@@ -107,6 +107,7 @@ function Test-IbisToolStatus {
     )
 
     foreach ($tool in $ToolDefinitions) {
+        $installState = $null
         if ($tool.executablePath) {
             $installState = Test-IbisToolInstallState -ToolsRoot $ToolsRoot -ToolDefinition $tool
             $expectedPath = $installState.ExpectedPath
@@ -130,6 +131,8 @@ function Test-IbisToolStatus {
             Status = $status
             Present = $present
             ExpectedPath = $expectedPath
+            Assessment = $installState
+            Message = if ($installState) { $installState.Message } else { $null }
             DownloadUrl = $tool.downloadUrl
             ManualUrl = $tool.manualUrl
             Notes = $tool.notes
@@ -154,9 +157,12 @@ function Get-IbisToolAcquisitionPlan {
             [pscustomobject]@{
                 Id = $status.Id
                 Name = $status.Name
+                Status = $status.Status
                 ExpectedPath = $status.ExpectedPath
                 AcquisitionSource = $source
                 Notes = $status.Notes
+                Message = $status.Message
+                ExistingFiles = if ($status.Assessment) { @($status.Assessment.VersionedExecutables) } else { @() }
             }
         }
     }
@@ -180,10 +186,19 @@ function Format-IbisToolAcquisitionPlan {
     $lines += ''
     foreach ($item in $AcquisitionPlan) {
         $lines += $item.Name
+        if (-not [string]::IsNullOrWhiteSpace([string]$item.Status)) {
+            $lines += ('  Assessment:    {0}' -f $item.Status)
+        }
         $lines += ('  Expected path: {0}' -f $item.ExpectedPath)
         $lines += ('  Get from:      {0}' -f $item.AcquisitionSource)
         if (-not [string]::IsNullOrWhiteSpace($item.Notes)) {
             $lines += ('  Notes:         {0}' -f $item.Notes)
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$item.Message)) {
+            $lines += ('  Detail:        {0}' -f $item.Message)
+        }
+        if ($item.ExistingFiles -and $item.ExistingFiles.Count -gt 0) {
+            $lines += ('  Existing:      {0}' -f (($item.ExistingFiles | ForEach-Object { $_.Name }) -join ', '))
         }
         $lines += ''
     }
@@ -1200,7 +1215,107 @@ function New-IbisToolBackupPath {
     $backupPath
 }
 
-function Test-IbisToolInstallState {
+function Clear-IbisToolPreviousInstall {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ToolsRoot,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ToolDefinition
+    )
+
+    $installDirectory = Get-IbisToolInstallDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+    if (-not (Test-Path -LiteralPath $installDirectory -PathType Container)) {
+        return $null
+    }
+
+    $items = @()
+    if ((Resolve-IbisComparablePath -Path $installDirectory) -eq (Resolve-IbisComparablePath -Path $ToolsRoot)) {
+        foreach ($folderName in @($ToolDefinition.renameExtractedDirectoryTo, $ToolDefinition.renameExtractedDirectoryFrom)) {
+            if (-not [string]::IsNullOrWhiteSpace($folderName)) {
+                $path = Join-Path $ToolsRoot $folderName
+                if (Test-Path -LiteralPath $path) {
+                    $items += Get-Item -LiteralPath $path -Force
+                }
+            }
+        }
+    }
+    elseif ($ToolDefinition.installDirectory -like 'EZTools\net9*') {
+        $expectedPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+        if (Test-Path -LiteralPath $expectedPath) {
+            $items += Get-Item -LiteralPath $expectedPath -Force
+        }
+    }
+    else {
+        $items = @(Get-ChildItem -LiteralPath $installDirectory -Force | Where-Object {
+            $_.Name -ne '_ibis-backup' -and $_.Name -ne '_s' -and $_.Name -ne '_ibis-staging'
+        })
+    }
+
+    if ($items.Count -eq 0) {
+        return $null
+    }
+
+    $backupPath = New-IbisToolBackupPath -InstallDirectory $installDirectory
+    foreach ($item in $items) {
+        if ($PSCmdlet.ShouldProcess($item.FullName, "Archive previous $($ToolDefinition.name) install")) {
+            Move-Item -LiteralPath $item.FullName -Destination $backupPath -Force
+        }
+    }
+    $backupPath
+}
+
+function Get-IbisToolFileVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
+    )
+
+    $version = $null
+    try {
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($File.FullName)
+        if (-not [string]::IsNullOrWhiteSpace($versionInfo.ProductVersion)) {
+            $version = $versionInfo.ProductVersion
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($versionInfo.FileVersion)) {
+            $version = $versionInfo.FileVersion
+        }
+    }
+    catch {
+    }
+
+    [pscustomobject]@{
+        Name = $File.Name
+        Path = $File.FullName
+        Version = $version
+        Length = $File.Length
+        LastWriteTime = $File.LastWriteTime
+    }
+}
+
+function Remove-IbisEmptyToolWorkspaceDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallDirectory
+    )
+
+    foreach ($workspaceName in @('_s', '_ibis-staging')) {
+        $workspacePath = Join-Path $InstallDirectory $workspaceName
+        if (-not (Test-Path -LiteralPath $workspacePath -PathType Container)) {
+            continue
+        }
+
+        $items = @(Get-ChildItem -LiteralPath $workspacePath -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($items.Count -eq 0) {
+            Remove-Item -LiteralPath $workspacePath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Get-IbisToolInstallAssessment {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1212,52 +1327,70 @@ function Test-IbisToolInstallState {
 
     $expectedPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
     $installDirectory = Get-IbisToolInstallDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
-
-    if (Test-Path -LiteralPath $expectedPath -PathType Leaf) {
-        return [pscustomobject]@{
-            Id = $ToolDefinition.id
-            Name = $ToolDefinition.name
-            Status = 'Present'
-            Present = $true
-            ExpectedPath = $expectedPath
-            InstallDirectory = $installDirectory
-            Message = 'Expected executable is present.'
-        }
+    $canonicalPresent = Test-Path -LiteralPath $expectedPath -PathType Leaf
+    $versionedExecutables = @()
+    if ($ToolDefinition.renameExecutablePattern) {
+        $versionedExecutables = @(Get-IbisExecutableRenameCandidate -InstallDirectory $installDirectory -Pattern $ToolDefinition.renameExecutablePattern |
+            Where-Object { (Resolve-IbisComparablePath -Path $_.FullName) -ne (Resolve-IbisComparablePath -Path $expectedPath) } |
+            ForEach-Object { Get-IbisToolFileVersion -File $_ })
     }
 
-    if (Test-Path -LiteralPath $installDirectory -PathType Container) {
+    $status = 'Missing'
+    $message = 'Expected executable is missing.'
+    if ($canonicalPresent) {
+        $status = if ($versionedExecutables.Count -gt 0) { 'Present with legacy files' } else { 'Present' }
+        $message = if ($versionedExecutables.Count -gt 0) {
+            "Expected executable is present; $($versionedExecutables.Count) versioned executable(s) also remain."
+        }
+        else {
+            'Expected executable is present.'
+        }
+    }
+    elseif ($versionedExecutables.Count -eq 1) {
+        $status = 'Needs Normalization'
+        $message = "Found versioned executable '$($versionedExecutables[0].Name)' but not the configured canonical filename. Download Missing Tools can install the latest release, or use Reinstall Selected to archive it first."
+    }
+    elseif ($versionedExecutables.Count -gt 1) {
+        $status = 'Ambiguous Existing Versions'
+        $message = "Found $($versionedExecutables.Count) versioned executables but not the configured canonical filename. Reinstall Selected will archive the active tool folder and install the latest release."
+    }
+    elseif (Test-Path -LiteralPath $installDirectory -PathType Container) {
         $items = @(Get-ChildItem -LiteralPath $installDirectory -Force | Where-Object {
             $_.Name -ne '_ibis-staging' -and $_.Name -ne '_s' -and $_.Name -ne '_ibis-backup'
         })
         if ((Resolve-IbisComparablePath -Path $installDirectory) -eq (Resolve-IbisComparablePath -Path $ToolsRoot) -and $ToolDefinition.renameExtractedDirectoryTo) {
             $toolFolder = Join-Path $ToolsRoot $ToolDefinition.renameExtractedDirectoryTo
-            $items = @()
-            if (Test-Path -LiteralPath $toolFolder) {
-                $items = @(Get-Item -LiteralPath $toolFolder -Force)
-            }
+            $items = if (Test-Path -LiteralPath $toolFolder) { @(Get-Item -LiteralPath $toolFolder -Force) } else { @() }
         }
         if ($items.Count -gt 0) {
-            return [pscustomobject]@{
-                Id = $ToolDefinition.id
-                Name = $ToolDefinition.name
-                Status = 'Partial'
-                Present = $false
-                ExpectedPath = $expectedPath
-                InstallDirectory = $installDirectory
-                Message = 'Install directory contains files, but the expected executable is missing.'
-            }
+            $status = 'Partial'
+            $message = 'Install directory contains files, but the expected executable is missing.'
         }
     }
 
     [pscustomobject]@{
         Id = $ToolDefinition.id
         Name = $ToolDefinition.name
-        Status = 'Missing'
-        Present = $false
+        Status = $status
+        Present = $canonicalPresent
         ExpectedPath = $expectedPath
         InstallDirectory = $installDirectory
-        Message = 'Expected executable is missing.'
+        VersionedExecutables = @($versionedExecutables)
+        Message = $message
     }
+}
+
+function Test-IbisToolInstallState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ToolsRoot,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ToolDefinition
+    )
+
+    Get-IbisToolInstallAssessment -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
 }
 
 function Invoke-IbisInstallTool {
@@ -1273,12 +1406,14 @@ function Invoke-IbisInstallTool {
 
         [int]$ProgressIndex = 0,
 
-        [int]$ProgressTotal = 0
+        [int]$ProgressTotal = 0,
+
+        [switch]$ForceReinstall
     )
 
     $installState = Test-IbisToolInstallState -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
     $expectedPath = $installState.ExpectedPath
-    if ($installState.Present) {
+    if ($installState.Present -and -not $ForceReinstall) {
         Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'Present' -Message 'Tool already present.' -Index $ProgressIndex -Total $ProgressTotal -Status 'Skipped'
         return [pscustomobject]@{
             Id = $ToolDefinition.id
@@ -1342,9 +1477,23 @@ function Invoke-IbisInstallTool {
 
             Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'Publish' -Message "Publishing files to $installDirectory." -Index $ProgressIndex -Total $ProgressTotal
             $publishSource = Get-IbisToolPublishSource -ExtractDirectory $workspace.ExtractDirectory -ToolDefinition $ToolDefinition
-            $backupPath = Publish-IbisStagedToolInstall -StagedSourcePath $publishSource -InstallDirectory $installDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+            $publishedExecutableRelativePath = $null
+            if ($ToolDefinition.renameExecutablePattern) {
+                $stagedCandidates = @(Get-IbisExecutableRenameCandidate -InstallDirectory $publishSource -Pattern $ToolDefinition.renameExecutablePattern)
+                if ($stagedCandidates.Count -eq 1) {
+                    $publishedExecutableRelativePath = $stagedCandidates[0].FullName.Substring($publishSource.Length).TrimStart('\', '/')
+                }
+            }
+            if ($ForceReinstall) {
+                Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'ArchivePrevious' -Message 'Archiving previous tool files before reinstall.' -Index $ProgressIndex -Total $ProgressTotal
+                $backupPath = Clear-IbisToolPreviousInstall -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+            }
+            $publishBackupPath = Publish-IbisStagedToolInstall -StagedSourcePath $publishSource -InstallDirectory $installDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+            if ($publishBackupPath) {
+                $backupPath = $publishBackupPath
+            }
             Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'PostInstall' -Message 'Running post-install checks.' -Index $ProgressIndex -Total $ProgressTotal
-            Invoke-IbisToolPostInstall -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
+            Invoke-IbisToolPostInstall -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition -PublishedExecutableRelativePath $publishedExecutableRelativePath
         }
         finally {
             if ($workspace -and (Test-Path -LiteralPath $workspace.Root)) {
@@ -1356,6 +1505,7 @@ function Invoke-IbisInstallTool {
                     Write-Warning "Unable to remove Ibis install workspace: $($workspace.Root). $($_.Exception.Message)"
                 }
             }
+            Remove-IbisEmptyToolWorkspaceDirectory -InstallDirectory $installDirectory
         }
     }
 
@@ -1392,12 +1542,17 @@ function Invoke-IbisInstallMissingTools {
 
         [string[]]$ToolIds,
 
-        [string]$ProgressPath
+        [string]$ProgressPath,
+
+        [switch]$ForceReinstall
     )
 
     $statuses = @(Test-IbisToolStatus -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions)
     $missing = @($statuses | Where-Object { -not $_.Present })
-    if ($ToolIds -and $ToolIds.Count -gt 0) {
+    if ($ForceReinstall -and $ToolIds -and $ToolIds.Count -gt 0) {
+        $missing = @($statuses | Where-Object { $ToolIds -contains $_.Id })
+    }
+    elseif ($ToolIds -and $ToolIds.Count -gt 0) {
         $missing = @($missing | Where-Object { $ToolIds -contains $_.Id })
     }
 
@@ -1422,7 +1577,7 @@ function Invoke-IbisInstallMissingTools {
         try {
             if ($PSCmdlet.ShouldProcess($definition.name, 'Install missing Ibis tool')) {
                 Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $definition.id -ToolName $definition.name -Stage 'ToolStart' -Message "Starting $($definition.name)." -Index $index -Total $total
-                Invoke-IbisInstallTool -ToolsRoot $ToolsRoot -ToolDefinition $definition -ProgressPath $ProgressPath -ProgressIndex $index -ProgressTotal $total
+                Invoke-IbisInstallTool -ToolsRoot $ToolsRoot -ToolDefinition $definition -ProgressPath $ProgressPath -ProgressIndex $index -ProgressTotal $total -ForceReinstall:$ForceReinstall
             }
         }
         catch {
@@ -1447,7 +1602,9 @@ function Invoke-IbisToolPostInstall {
         [string]$ToolsRoot,
 
         [Parameter(Mandatory = $true)]
-        [object]$ToolDefinition
+        [object]$ToolDefinition,
+
+        [string]$PublishedExecutableRelativePath
     )
 
     if ($ToolDefinition.renameExtractedDirectoryFrom -and $ToolDefinition.renameExtractedDirectoryTo) {
@@ -1464,10 +1621,22 @@ function Invoke-IbisToolPostInstall {
 
     if ($ToolDefinition.renameExecutablePattern -and $ToolDefinition.renameExecutableTo) {
         $installDirectory = Get-IbisToolInstallDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
-        $renameCandidates = @(Get-IbisExecutableRenameCandidate -InstallDirectory $installDirectory -Pattern $ToolDefinition.renameExecutablePattern)
-        if ($renameCandidates.Count -eq 1) {
-            $target = Join-Path $installDirectory $ToolDefinition.renameExecutableTo
-            if ($renameCandidates[0].FullName -ne $target) {
+        $target = Join-Path $installDirectory $ToolDefinition.renameExecutableTo
+        $publishedCandidate = $null
+        if (-not [string]::IsNullOrWhiteSpace($PublishedExecutableRelativePath)) {
+            $candidatePath = Join-Path $installDirectory $PublishedExecutableRelativePath
+            if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+                $publishedCandidate = Get-Item -LiteralPath $candidatePath -Force
+            }
+        }
+        if ($publishedCandidate) {
+            if ((Resolve-IbisComparablePath -Path $publishedCandidate.FullName) -ne (Resolve-IbisComparablePath -Path $target)) {
+                Move-Item -LiteralPath $publishedCandidate.FullName -Destination $target -Force
+            }
+        }
+        else {
+            $renameCandidates = @(Get-IbisExecutableRenameCandidate -InstallDirectory $installDirectory -Pattern $ToolDefinition.renameExecutablePattern)
+            if ($renameCandidates.Count -eq 1 -and (Resolve-IbisComparablePath -Path $renameCandidates[0].FullName) -ne (Resolve-IbisComparablePath -Path $target)) {
                 Move-Item -LiteralPath $renameCandidates[0].FullName -Destination $target -Force
             }
         }
@@ -1492,7 +1661,7 @@ function Get-IbisExecutableRenameCandidate {
         Where-Object {
             $relativePath = $_.FullName.Substring($InstallDirectory.Length).TrimStart('\', '/')
             $pathParts = $relativePath -split '[\\/]'
-            -not ($pathParts -contains '_ibis-backup') -and -not ($pathParts -contains '_ibis-staging')
+            -not ($pathParts -contains '_ibis-backup') -and -not ($pathParts -contains '_ibis-staging') -and -not ($pathParts -contains '_s')
         } |
         Sort-Object FullName
 }
@@ -6336,10 +6505,13 @@ Export-ModuleMember -Function Get-IbisVisualCppRedistributableStatus
 Export-ModuleMember -Function Get-IbisPowerShellReadiness
 Export-ModuleMember -Function Unblock-IbisProjectScriptFile
 Export-ModuleMember -Function New-IbisToolInstallWorkspace
+Export-ModuleMember -Function Remove-IbisEmptyToolWorkspaceDirectory
 Export-ModuleMember -Function Get-IbisToolPublishSource
 Export-ModuleMember -Function Backup-IbisToolInstallDirectory
 Export-ModuleMember -Function Publish-IbisStagedToolInstall
 Export-ModuleMember -Function New-IbisToolBackupPath
+Export-ModuleMember -Function Clear-IbisToolPreviousInstall
+Export-ModuleMember -Function Get-IbisToolInstallAssessment
 Export-ModuleMember -Function Test-IbisToolInstallState
 Export-ModuleMember -Function Get-IbisExecutableRenameCandidate
 Export-ModuleMember -Function Invoke-IbisToolPostInstall

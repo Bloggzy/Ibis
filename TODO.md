@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.7`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.8`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -76,6 +76,7 @@ This roadmap reflects the current state as of `v0.6.7`. The major first-pass pro
 - [x] Avoid backing up unrelated tools in shared EZTools folder.
 - [x] Post-install executable rename support.
 - [x] Handle Chainsaw executable naming.
+- [x] Detect versioned executable leftovers and provide backup-based selected-tool reinstalls.
 - [x] Handle EvtxECmd's own EZTools subfolder.
 - [x] Defender exclusion metadata for rule-heavy tools.
 

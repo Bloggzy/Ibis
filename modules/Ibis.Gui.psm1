@@ -896,7 +896,11 @@ function Start-IbisToolInstallRunspace {
         [Parameter(Mandatory = $true)]
         [string]$ToolsRoot,
 
-        [string]$ProgressPath
+        [string]$ProgressPath,
+
+        [string[]]$ToolIds,
+
+        [bool]$ForceReinstall = $false
     )
 
     $coreModulePath = Join-Path $ProjectRoot 'modules\Ibis.Core.psm1'
@@ -905,14 +909,16 @@ function Start-IbisToolInstallRunspace {
             [string]$ProjectRoot,
             [string]$ToolsRoot,
             [string]$CoreModulePath,
-            [string]$ProgressPath
+            [string]$ProgressPath,
+            [string[]]$ToolIds,
+            [bool]$ForceReinstall
         )
 
         $ErrorActionPreference = 'Stop'
         Import-Module $CoreModulePath -Force
         $config = Get-IbisConfig -ProjectRoot $ProjectRoot
         $toolDefinitions = @(Get-IbisToolDefinition -ProjectRoot $ProjectRoot -Config $config)
-        @(Invoke-IbisInstallMissingTools -ToolsRoot $ToolsRoot -ToolDefinitions $toolDefinitions -ProgressPath $ProgressPath)
+        @(Invoke-IbisInstallMissingTools -ToolsRoot $ToolsRoot -ToolDefinitions $toolDefinitions -ProgressPath $ProgressPath -ToolIds $ToolIds -ForceReinstall:$ForceReinstall)
     }
 
     $powershell = [PowerShell]::Create()
@@ -921,6 +927,8 @@ function Start-IbisToolInstallRunspace {
     [void]$powershell.AddArgument($ToolsRoot)
     [void]$powershell.AddArgument($coreModulePath)
     [void]$powershell.AddArgument($ProgressPath)
+    [void]$powershell.AddArgument($ToolIds)
+    [void]$powershell.AddArgument($ForceReinstall)
 
     [pscustomobject]@{
         PowerShell = $powershell
@@ -1668,7 +1676,7 @@ function Show-IbisGui {
     $toolActionsGroup = New-Object System.Windows.Forms.GroupBox
     $toolActionsGroup.Text = 'Tool management'
     $toolActionsGroup.Location = New-Object System.Drawing.Point(12, 76)
-    $toolActionsGroup.Size = New-Object System.Drawing.Size(368, 148)
+    $toolActionsGroup.Size = New-Object System.Drawing.Size(368, 180)
     $setupTab.Controls.Add($toolActionsGroup)
 
     $checkToolsButton = New-Object System.Windows.Forms.Button
@@ -1695,26 +1703,33 @@ function Show-IbisGui {
     $updateHayabusaRulesButton.Width = 214
     $toolActionsGroup.Controls.Add($updateHayabusaRulesButton)
 
+    $reinstallSelectedToolButton = New-Object System.Windows.Forms.Button
+    $reinstallSelectedToolButton.Text = 'Reinstall Selected'
+    $reinstallSelectedToolButton.Location = New-Object System.Drawing.Point(12, 104)
+    $reinstallSelectedToolButton.Width = 338
+    $reinstallSelectedToolButton.Enabled = $false
+    $toolActionsGroup.Controls.Add($reinstallSelectedToolButton)
+
     $longPathsLabel = New-Object System.Windows.Forms.Label
     $longPathsLabel.Text = 'Long paths'
-    $longPathsLabel.Location = New-Object System.Drawing.Point(12, 110)
+    $longPathsLabel.Location = New-Object System.Drawing.Point(12, 144)
     $longPathsLabel.Size = New-Object System.Drawing.Size(82, 20)
     $toolActionsGroup.Controls.Add($longPathsLabel)
 
     $enableLongPathsButton = New-Object System.Windows.Forms.Button
     $enableLongPathsButton.Text = 'Enable'
-    $enableLongPathsButton.Location = New-Object System.Drawing.Point(100, 104)
+    $enableLongPathsButton.Location = New-Object System.Drawing.Point(100, 138)
     $enableLongPathsButton.Width = 82
     $toolActionsGroup.Controls.Add($enableLongPathsButton)
 
     $disableLongPathsButton = New-Object System.Windows.Forms.Button
     $disableLongPathsButton.Text = 'Disable'
-    $disableLongPathsButton.Location = New-Object System.Drawing.Point(192, 104)
+    $disableLongPathsButton.Location = New-Object System.Drawing.Point(192, 138)
     $disableLongPathsButton.Width = 82
     $toolActionsGroup.Controls.Add($disableLongPathsButton)
 
     $longPathsStatusLabel = New-Object System.Windows.Forms.Label
-    $longPathsStatusLabel.Location = New-Object System.Drawing.Point(284, 109)
+    $longPathsStatusLabel.Location = New-Object System.Drawing.Point(284, 143)
     $longPathsStatusLabel.Size = New-Object System.Drawing.Size(70, 20)
     $toolActionsGroup.Controls.Add($longPathsStatusLabel)
 
@@ -1792,26 +1807,26 @@ function Show-IbisGui {
     $powerShellReadinessGroup.Controls.Add($unblockIbisFilesButton)
 
     $toolList = New-Object System.Windows.Forms.ListView
-    $toolList.Location = New-Object System.Drawing.Point(12, 294)
-    $toolList.Size = New-Object System.Drawing.Size(744, 92)
+    $toolList.Location = New-Object System.Drawing.Point(12, 326)
+    $toolList.Size = New-Object System.Drawing.Size(744, 140)
     $toolList.View = 'Details'
     $toolList.FullRowSelect = $true
     $toolList.GridLines = $true
-    [void]$toolList.Columns.Add('Status', 90)
-    [void]$toolList.Columns.Add('Tool', 220)
-    [void]$toolList.Columns.Add('Expected Path', 420)
+    [void]$toolList.Columns.Add('Status', 170)
+    [void]$toolList.Columns.Add('Tool', 150)
+    [void]$toolList.Columns.Add('Expected Path', 410)
     $setupTab.Controls.Add($toolList)
 
     $toolGuidanceTextBox = New-Object System.Windows.Forms.TextBox
-    $toolGuidanceTextBox.Location = New-Object System.Drawing.Point(12, 398)
-    $toolGuidanceTextBox.Size = New-Object System.Drawing.Size(744, 210)
+    $toolGuidanceTextBox.Location = New-Object System.Drawing.Point(12, 478)
+    $toolGuidanceTextBox.Size = New-Object System.Drawing.Size(744, 198)
     $toolGuidanceTextBox.Multiline = $true
     $toolGuidanceTextBox.ScrollBars = 'Vertical'
     $toolGuidanceTextBox.ReadOnly = $true
     $setupTab.Controls.Add($toolGuidanceTextBox)
 
     $toolHelp = New-Object System.Windows.Forms.Label
-    $toolHelp.Location = New-Object System.Drawing.Point(12, 626)
+    $toolHelp.Location = New-Object System.Drawing.Point(12, 688)
     $toolHelp.Size = New-Object System.Drawing.Size(744, 40)
     $toolHelp.Text = 'Missing tools are not downloaded yet. The guidance view shows where each missing tool is expected and where it can be obtained.'
     $setupTab.Controls.Add($toolHelp)
@@ -2134,6 +2149,8 @@ function Show-IbisGui {
         ProgressPath = $null
         ProgressLineCount = 0
         FileSnapshot = $null
+        ToolIds = @()
+        ForceReinstall = $false
     }
     $downloadPollTimer = New-Object System.Windows.Forms.Timer
     $downloadPollTimer.Interval = 750
@@ -2355,6 +2372,7 @@ function Show-IbisGui {
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
         foreach ($status in $statuses) {
             $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
+            $item.Tag = $status
             [void]$item.SubItems.Add($status.Name)
             [void]$item.SubItems.Add($status.ExpectedPath)
             if ($status.Present) {
@@ -2608,6 +2626,29 @@ function Show-IbisGui {
         & $refreshToolStatusList
     })
 
+    $toolList.Add_SelectedIndexChanged({
+        $reinstallSelectedToolButton.Enabled = ($toolList.SelectedItems.Count -eq 1 -and $null -eq $downloadState.Operation)
+    })
+
+    $reinstallSelectedToolButton.Add_Click({
+        if ($toolList.SelectedItems.Count -ne 1) {
+            $statusLabel.Text = 'Select one tool to reinstall'
+            return
+        }
+
+        $selectedStatus = $toolList.SelectedItems[0].Tag
+        if ($null -eq $selectedStatus) {
+            $statusLabel.Text = 'Selected tool details are unavailable; recheck tools first'
+            return
+        }
+
+        $downloadState.ToolIds = @([string]$selectedStatus.Id)
+        $downloadState.ForceReinstall = $true
+        $downloadMissingToolsButton.PerformClick()
+        $downloadState.ToolIds = @()
+        $downloadState.ForceReinstall = $false
+    })
+
     $checkPowerShellReadinessButton.Add_Click({
         $readiness = & $updatePowerShellReadiness -WriteOutput $true
         $statusLabel.Text = "PowerShell readiness: $($readiness.Status)"
@@ -2847,7 +2888,8 @@ function Show-IbisGui {
             $toolList.Items.Clear()
             $updatedStatuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
             foreach ($status in $updatedStatuses) {
-                $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
+            $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
+            $item.Tag = $status
                 [void]$item.SubItems.Add($status.Name)
                 [void]$item.SubItems.Add($status.ExpectedPath)
                 if ($status.Present) {
@@ -2887,6 +2929,7 @@ function Show-IbisGui {
             $downloadState.ProgressLineCount = 0
             $downloadState.FileSnapshot = $null
             $downloadMissingToolsButton.Enabled = $true
+            $reinstallSelectedToolButton.Enabled = ($toolList.SelectedItems.Count -eq 1)
             $updateHayabusaRulesButton.Enabled = $true
             $checkToolsButton.Enabled = $true
             $toolGuidanceButton.Enabled = $true
@@ -2919,21 +2962,30 @@ function Show-IbisGui {
         }
 
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
+        $forceReinstall = [bool]$downloadState.ForceReinstall
+        $requestedToolIds = @($downloadState.ToolIds)
         $missing = @($statuses | Where-Object { -not $_.Present })
-        if ($missing.Count -eq 0) {
+        $targets = $missing
+        if ($forceReinstall -and $requestedToolIds.Count -gt 0) {
+            $targets = @($statuses | Where-Object { $requestedToolIds -contains $_.Id })
+        }
+        if ($targets.Count -eq 0) {
             Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text 'All configured tools are present.' -StripAnsi
-            $statusLabel.Text = 'No missing tools'
+            $statusLabel.Text = if ($forceReinstall) { 'No selected tools to reinstall' } else { 'No missing tools' }
             return
         }
 
-        $message = "Ibis will attempt to download and install $($missing.Count) missing tools into:`r`n`r`n$($toolsTextBox.Text)`r`n`r`nSome tools may be flagged by antivirus products. Continue?"
-        $choice = [System.Windows.Forms.MessageBox]::Show($message, 'Download Missing Tools', 'YesNo', 'Warning')
+        $actionText = if ($forceReinstall) { 'reinstall the latest release of' } else { 'download and install' }
+        $reinstallNote = if ($forceReinstall) { "`r`n`r`nActive files for the selected dedicated tool will be archived under _ibis-backup before publishing. Unrelated tools are preserved; shared EZTools folders are not cleared wholesale." } else { '' }
+        $message = "Ibis will attempt to $actionText $($targets.Count) tool(s) into:`r`n`r`n$($toolsTextBox.Text)$reinstallNote`r`n`r`nSome tools may be flagged by antivirus products. Continue?"
+        $choice = [System.Windows.Forms.MessageBox]::Show($message, $(if ($forceReinstall) { 'Reinstall Selected Tool' } else { 'Download Missing Tools' }), 'YesNo', 'Warning')
         if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
             $statusLabel.Text = 'Tool download cancelled'
             return
         }
 
         $downloadMissingToolsButton.Enabled = $false
+        $reinstallSelectedToolButton.Enabled = $false
         $updateHayabusaRulesButton.Enabled = $false
         $checkToolsButton.Enabled = $false
         $toolGuidanceButton.Enabled = $false
@@ -2944,16 +2996,16 @@ function Show-IbisGui {
         $openToolsFolderButton.Enabled = $false
         $toolsTextBox.Enabled = $false
         $toolGuidanceTextBox.Clear()
-        Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Starting background download/install for $($missing.Count) missing tools...`r`n" -StripAnsi
+        Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Starting background $actionText for $($targets.Count) tool(s)...`r`n" -StripAnsi
         Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "The GUI should remain responsive while this runs. Progress will appear here as each tool moves through download, extract, publish, and post-install checks.`r`n" -StripAnsi
-        $statusLabel.Text = 'Downloading missing tools'
-        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Starting background download/install for $($missing.Count) missing tools into $($toolsTextBox.Text)."
+        $statusLabel.Text = if ($forceReinstall) { 'Reinstalling selected tool' } else { 'Downloading missing tools' }
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Starting background $actionText for $($targets.Count) tool(s) into $($toolsTextBox.Text)."
         $downloadState.FileSnapshot = Get-IbisFileSystemSnapshot -RootPath $toolsTextBox.Text
 
         try {
             $downloadState.ProgressPath = Join-Path ([System.IO.Path]::GetTempPath()) ('IbisToolInstallProgress-' + [System.Guid]::NewGuid().ToString() + '.jsonl')
             $downloadState.ProgressLineCount = 0
-            $downloadState.Operation = Start-IbisToolInstallRunspace -ProjectRoot $ProjectRoot -ToolsRoot $toolsTextBox.Text -ProgressPath $downloadState.ProgressPath
+            $downloadState.Operation = Start-IbisToolInstallRunspace -ProjectRoot $ProjectRoot -ToolsRoot $toolsTextBox.Text -ProgressPath $downloadState.ProgressPath -ToolIds $requestedToolIds -ForceReinstall:$forceReinstall
             $downloadPollTimer.Start()
         }
         catch {
@@ -2976,6 +3028,7 @@ function Show-IbisGui {
             $downloadState.ProgressLineCount = 0
             $downloadState.FileSnapshot = $null
             $downloadMissingToolsButton.Enabled = $true
+            $reinstallSelectedToolButton.Enabled = ($toolList.SelectedItems.Count -eq 1)
             $updateHayabusaRulesButton.Enabled = $true
             $checkToolsButton.Enabled = $true
             $toolGuidanceButton.Enabled = $true

@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.7`
+Current version: `v0.6.8`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -47,7 +47,7 @@ Typical workflow:
 ## GUI Tabs
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
-- `Setup tools`: tools folder, PowerShell readiness checks, tool checks, downloads, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
+- `Setup tools`: tools folder, PowerShell readiness checks, tool checks, downloads, install assessments, selected-tool reinstall, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel-before-next-module.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
@@ -266,5 +266,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.7`, both test runs pass with `123` tests.
+As of `v0.6.8`, both test runs pass with `127` tests.
 
