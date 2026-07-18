@@ -3,13 +3,21 @@
 All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
+
+## v0.6.9 - 2026-07-18
+
+- Separated Windows Event Log outputs into dedicated `EvtxECmd`, `DuckDB`, `Hayabusa`, `Takajo`, and `Chainsaw` folders beneath `HOSTNAME\EventLogs`.
+- Standardised generated Event Log output files to the `HOSTNAME-Tool-...` convention, including recursive normalization of Takajo automagic output files.
+- Kept Takajo backup and audit material outside its result directory so prior results can be archived reliably before a new run.
+- Remove empty Takajo temporary workspaces and apply a final recursive naming pass to Takajo output files.
+- Continue Takajo cleanup when Defender or another process blocks an individual output-file rename, and record the affected files as warnings.
+
 ## v0.6.8 - 2026-07-18
 
 - Added tool install assessments that distinguish missing installs, a single versioned executable needing normalization, multiple ambiguous legacy executables, partial installs, and canonical installs with legacy files still present.
 - Fixed versioned executable installs for Hayabusa and Takajo by selecting the executable from the newly staged release before publishing, rather than allowing old versioned binaries to make the post-install rename ambiguous.
 - Added a confirmation-gated `Reinstall Selected` action on the Setup tools tab. It downloads the latest configured source and archives the active contents of a dedicated tool folder under `_ibis-backup` before publishing the new release.
 - Preserved shared `EZTools` installations during forced reinstalls: Ibis does not clear the shared directory wholesale.
-
 
 ## v0.6.7 - 2026-07-17
 
@@ -114,7 +122,7 @@ Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch rel
 
 ## v0.5.0 - 2026-04-26
 
-Initial beta baseline after the major rebuild of Ibis from scratch (over the Anzac long weekend 2026-04-25).
+Initial beta baseline after the major initial build of Ibis from scratch (over the Anzac long weekend 2026-04-25).
 
 - Added a WinForms GUI for setup, tool acquisition, evidence selection, output selection, processing module selection, settings, and logs.
 - Added downloader and installer support for configured DFIR tools, including GitHub latest-release handling, staged installs, backups, executable renaming, and install validation.

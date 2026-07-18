@@ -1,6 +1,6 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.6.8`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.6.9`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
@@ -89,6 +89,7 @@ This roadmap reflects the current state as of `v0.6.8`. The major first-pass pro
 - [x] Put final system summary text/JSON in host root.
 - [x] Put supporting/working files under `_Working`.
 - [x] Use hostname-based output names for implemented modules.
+- [x] Separate Windows Event Log outputs by tool and normalize their result file names.
 - [x] Rename timestamp-prefixed outputs from tools such as PECmd, SrumECmd, SumECmd, and user artefact tools.
 - [x] Use `_Working` folder names for special helper/transparency output folders.
 - [x] Emit processing command line hints through progress updates near the related module output.

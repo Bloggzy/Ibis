@@ -4933,6 +4933,25 @@ function Get-IbisEventLogPath {
     [System.IO.Path]::Combine($SourceRoot, 'Windows\System32\winevt\Logs')
 }
 
+function Get-IbisEventLogToolOutputDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Hostname,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ToolFolder
+    )
+
+    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+    $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
+    Join-Path (Join-Path $hostOutputRoot 'EventLogs') $ToolFolder
+}
+
 function Invoke-IbisEvtxECmdEventLogs {
     [CmdletBinding()]
     param(
@@ -4955,7 +4974,7 @@ function Invoke-IbisEvtxECmdEventLogs {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
-    $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
+    $outputDirectory = Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'EvtxECmd'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $outputPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EvtxECmd-EventLogs-Output.csv')
 
@@ -5033,7 +5052,7 @@ function Invoke-IbisEvtxECmdEventLogs {
         }
     }
 
-    $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EventLogs.json')
+    $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EvtxECmd-EventLogs.json')
     $payload = [pscustomobject]@{
         ModuleId = 'eventlogs'
         Created = (Get-Date).ToString('s')
@@ -5082,7 +5101,7 @@ function Get-IbisEvtxECmdCsvPath {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    Join-Path (Join-Path $hostOutputRoot 'EventLogs') (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EvtxECmd-EventLogs-Output.csv')
+    Join-Path (Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'EvtxECmd') (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'EvtxECmd-EventLogs-Output.csv')
 }
 
 function Get-IbisDuckDbEventLogQueryDefinition {
@@ -5101,19 +5120,19 @@ function Get-IbisDuckDbEventLogQueryDefinition {
             Id = 'time-span'
             Name = 'Event log time span'
             QueryPath = Join-Path $queryRoot 'time-span.sql'
-            OutputFileNameFormat = 'Event-Log-Time-Span-Info.csv'
+            OutputFileNameFormat = 'DuckDB-Event-Log-Time-Span-Info.csv'
         }
         [pscustomobject]@{
             Id = 'logons'
             Name = 'Event log user logons'
             QueryPath = Join-Path $queryRoot 'logons.sql'
-            OutputFileNameFormat = 'Event-Log-User-Logons.csv'
+            OutputFileNameFormat = 'DuckDB-Event-Log-User-Logons.csv'
         }
         [pscustomobject]@{
             Id = 'outbound-rdp'
             Name = 'Event log outbound RDP'
             QueryPath = Join-Path $queryRoot 'outbound-rdp.sql'
-            OutputFileNameFormat = 'Event-Log-Outbound-RDP.csv'
+            OutputFileNameFormat = 'DuckDB-Event-Log-Outbound-RDP.csv'
         }
     )
 }
@@ -5169,7 +5188,7 @@ function Invoke-IbisDuckDbEventLogSummary {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
+    $outputDirectory = Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'DuckDB'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $evtxCsvPath = Get-IbisEvtxECmdCsvPath -OutputRoot $OutputRoot -Hostname $safeHost
 
@@ -5319,7 +5338,7 @@ function Invoke-IbisHayabusaEventLogs {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
-    $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
+    $outputDirectory = Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Hayabusa'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $hayabusaCsvPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-Output.csv')
     $hayabusaJsonlPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-SuperVerbose.jsonl')
@@ -5415,7 +5434,7 @@ function Get-IbisHayabusaJsonlPath {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    Join-Path (Join-Path $hostOutputRoot 'EventLogs') (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-SuperVerbose.jsonl')
+    Join-Path (Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Hayabusa') (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-SuperVerbose.jsonl')
 }
 
 function Invoke-IbisTakajoEventLogs {
@@ -5436,10 +5455,16 @@ function Invoke-IbisTakajoEventLogs {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
-    $workingsDirectory = Join-Path $outputDirectory '_Working'
+    $takajoOutputDirectory = Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Takajo'
+    $eventLogsDirectory = Split-Path -Path $takajoOutputDirectory -Parent
+    # Takajo requires a non-existent output directory. Keep a backup workspace outside the
+    # result directory while it runs and remove it when it has no material to preserve.
+    $temporaryWorkspaceRoot = Join-Path $eventLogsDirectory '_Working'
+    $temporaryWorkingsDirectory = Join-Path $temporaryWorkspaceRoot 'Takajo'
+    $workingsDirectory = Join-Path $takajoOutputDirectory '_Working'
     $hayabusaJsonlPath = Get-IbisHayabusaJsonlPath -OutputRoot $OutputRoot -Hostname $safeHost
-    $takajoOutputDirectory = Join-Path $outputDirectory 'Takajo'
+    $hasExistingTakajoDirectory = Test-Path -LiteralPath $takajoOutputDirectory -PathType Container
+    $hasExistingTakajoOutput = $hasExistingTakajoDirectory -and @((Get-ChildItem -LiteralPath $takajoOutputDirectory -Force)).Count -gt 0
 
     if (-not (Test-Path -LiteralPath $hayabusaJsonlPath -PathType Leaf)) {
         return [pscustomobject]@{
@@ -5453,8 +5478,10 @@ function Invoke-IbisTakajoEventLogs {
         }
     }
 
-    if (-not (Test-Path -LiteralPath $outputDirectory)) { New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null }
-    if (-not (Test-Path -LiteralPath $workingsDirectory)) { New-Item -ItemType Directory -Path $workingsDirectory -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $temporaryWorkingsDirectory)) { New-Item -ItemType Directory -Path $temporaryWorkingsDirectory -Force | Out-Null }
+    if ($hasExistingTakajoDirectory -and -not $hasExistingTakajoOutput) {
+        Remove-Item -LiteralPath $takajoOutputDirectory -Force
+    }
 
     $toolResults = @()
     $takajo = Get-IbisToolDefinitionById -ToolDefinitions $ToolDefinitions -Id 'takajo'
@@ -5467,13 +5494,15 @@ function Invoke-IbisTakajoEventLogs {
             $toolResults += [pscustomobject]@{ ToolId = $takajo.id; Mode = 'all'; OutputPath = $takajoOutputDirectory; Status = 'Failed'; ExitCode = $null; Message = "Takajo is missing at: $takajoPath" }
         }
         else {
-            $takajoBackup = Move-IbisExistingDirectoryToBackup -DirectoryPath $takajoOutputDirectory -BackupRoot (Join-Path $workingsDirectory 'Takajo-Backups')
+            $takajoBackup = if ($hasExistingTakajoOutput) { Move-IbisExistingDirectoryToBackup -DirectoryPath $takajoOutputDirectory -BackupRoot (Join-Path $temporaryWorkingsDirectory 'Takajo-Backups') } else { $null }
             $takajoResult = Invoke-IbisProcessCapture -FilePath $takajoPath -ArgumentList @('automagic', '-t', $hayabusaJsonlPath, '-o', $takajoOutputDirectory, '-s') -WorkingDirectory (Split-Path -Path $takajoPath -Parent)
             $takajoStatus = 'Completed'
             $takajoMessage = 'Takajo automagic completed.'
             if ($takajoResult.ExitCode -ne 0) { $takajoStatus = 'Failed'; $takajoMessage = "Takajo automagic exited with code $($takajoResult.ExitCode)." }
             elseif (-not (Test-Path -LiteralPath $takajoOutputDirectory -PathType Container)) { $takajoStatus = 'Completed With Warnings'; $takajoMessage = 'Takajo automagic completed, but the output folder was not found.' }
-            $toolResults += [pscustomobject]@{ ToolId = $takajo.id; Mode = 'automagic'; OutputPath = $takajoOutputDirectory; BackupPath = $takajoBackup; Status = $takajoStatus; ExitCode = $takajoResult.ExitCode; CommandLine = $takajoResult.CommandLine; Message = $takajoMessage }
+            $renamedAutomagicOutputs = @(Rename-IbisToolOutputFiles -SourceDirectory $takajoOutputDirectory -OutputDirectory $takajoOutputDirectory -Hostname $safeHost -ToolName 'Takajo')
+            $automagicToolResult = [pscustomobject]@{ ToolId = $takajo.id; Mode = 'automagic'; OutputPath = $takajoOutputDirectory; BackupPath = $takajoBackup; RenamedOutputs = $renamedAutomagicOutputs; Status = $takajoStatus; ExitCode = $takajoResult.ExitCode; CommandLine = $takajoResult.CommandLine; Message = $takajoMessage }
+            $toolResults += $automagicToolResult
 
             if (-not (Test-Path -LiteralPath $takajoOutputDirectory)) { New-Item -ItemType Directory -Path $takajoOutputDirectory -Force | Out-Null }
             $stackCommands = @(
@@ -5496,10 +5525,54 @@ function Invoke-IbisTakajoEventLogs {
                 elseif (-not (Test-Path -LiteralPath $stackOutputPath -PathType Leaf)) { $stackStatus = 'Completed With Warnings'; $stackMessage = "$stackCommand completed, but the expected CSV was not found." }
                 $toolResults += [pscustomobject]@{ ToolId = $takajo.id; Mode = $stackCommand; OutputPath = $stackOutputPath; Status = $stackStatus; ExitCode = $stackResult.ExitCode; CommandLine = $stackResult.CommandLine; Message = $stackMessage }
             }
+            $renamedFinalOutputs = @(Rename-IbisToolOutputFiles -SourceDirectory $takajoOutputDirectory -OutputDirectory $takajoOutputDirectory -Hostname $safeHost -ToolName 'Takajo')
+            $automagicToolResult.RenamedOutputs = @($automagicToolResult.RenamedOutputs) + $renamedFinalOutputs
+            $renameFailures = @($automagicToolResult.RenamedOutputs | Where-Object { $_.Status -eq 'Failed' })
+            if ($renameFailures.Count -gt 0 -and $automagicToolResult.Status -ne 'Failed') {
+                $automagicToolResult.Status = 'Completed With Warnings'
+                $automagicToolResult.Message = "Takajo automagic completed, but $($renameFailures.Count) file(s) could not be renamed. Check Microsoft Defender exclusions or the file lock details in the summary JSON."
+            }
         }
     }
 
-    $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Takajo.json')
+    if (-not (Test-Path -LiteralPath $takajoOutputDirectory)) {
+        New-Item -ItemType Directory -Path $takajoOutputDirectory -Force | Out-Null
+    }
+    $hasTemporaryWorkspaceContent = (Test-Path -LiteralPath $temporaryWorkingsDirectory) -and @((Get-ChildItem -LiteralPath $temporaryWorkingsDirectory -Force)).Count -gt 0
+    $movedWorkspaceToFinalDirectory = $false
+    if ($hasTemporaryWorkspaceContent) {
+        if (-not (Test-Path -LiteralPath $workingsDirectory)) {
+            Move-Item -LiteralPath $temporaryWorkingsDirectory -Destination $workingsDirectory -Force
+            $movedWorkspaceToFinalDirectory = $true
+        }
+        else {
+            Get-ChildItem -LiteralPath $temporaryWorkingsDirectory -Force | ForEach-Object {
+                $destinationPath = Join-Path $workingsDirectory $_.Name
+                if (Test-Path -LiteralPath $destinationPath) {
+                    $destinationPath = Join-Path $workingsDirectory ('Ibis-{0}-{1}' -f $_.Name, (Get-Date).ToString('yyyyMMdd-HHmmss'))
+                }
+                Move-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
+            }
+            Remove-Item -LiteralPath $temporaryWorkingsDirectory -Force
+        }
+    }
+    elseif (Test-Path -LiteralPath $temporaryWorkingsDirectory) {
+        Remove-Item -LiteralPath $temporaryWorkingsDirectory -Force
+    }
+    if ($movedWorkspaceToFinalDirectory) {
+        $temporaryBackupRoot = Join-Path $temporaryWorkingsDirectory 'Takajo-Backups'
+        $finalBackupRoot = Join-Path $workingsDirectory 'Takajo-Backups'
+        foreach ($toolResult in $toolResults) {
+            if ($toolResult.PSObject.Properties['BackupPath'] -and $toolResult.BackupPath -and $toolResult.BackupPath.StartsWith($temporaryBackupRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $toolResult.BackupPath = $finalBackupRoot + $toolResult.BackupPath.Substring($temporaryBackupRoot.Length)
+            }
+        }
+    }
+    if ((Test-Path -LiteralPath $temporaryWorkspaceRoot) -and @((Get-ChildItem -LiteralPath $temporaryWorkspaceRoot -Force)).Count -eq 0) {
+        Remove-Item -LiteralPath $temporaryWorkspaceRoot -Force
+    }
+
+    $summaryPath = Join-Path $takajoOutputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Takajo.json')
     $payload = [pscustomobject]@{
         ModuleId = 'takajo'
         Created = (Get-Date).ToString('s')
@@ -5507,7 +5580,7 @@ function Invoke-IbisTakajoEventLogs {
         ToolsRoot = $ToolsRoot
         HostOutputRoot = $hostOutputRoot
         OutputDirectory = $takajoOutputDirectory
-        WorkingsDirectory = $workingsDirectory
+        WorkingsDirectory = if (Test-Path -LiteralPath $workingsDirectory) { $workingsDirectory } else { $null }
         ToolResults = $toolResults
     }
     $payload | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $summaryPath -Encoding UTF8
@@ -5530,6 +5603,71 @@ function Invoke-IbisTakajoEventLogs {
     }
 }
 
+function Rename-IbisToolOutputFiles {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Hostname,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ToolName
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
+        return @()
+    }
+    if (-not (Test-Path -LiteralPath $OutputDirectory)) {
+        New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+    }
+
+    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+    $filePrefix = New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ($ToolName + '-')
+    $sameDirectory = (Resolve-IbisComparablePath -Path $SourceDirectory) -eq (Resolve-IbisComparablePath -Path $OutputDirectory)
+    $moved = @()
+    $files = @(Get-ChildItem -LiteralPath $SourceDirectory -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+        $relativePath = $_.FullName.Substring($SourceDirectory.Length).TrimStart('\', '/')
+        $pathParts = $relativePath -split '[\\/]'
+        -not ($pathParts -contains '_Working')
+    })
+    foreach ($file in $files) {
+        $relativeDirectory = $file.DirectoryName.Substring($SourceDirectory.Length).TrimStart('\', '/')
+        $destinationDirectory = if ([string]::IsNullOrWhiteSpace($relativeDirectory)) { $OutputDirectory } else { Join-Path $OutputDirectory $relativeDirectory }
+        if (-not (Test-Path -LiteralPath $destinationDirectory)) {
+            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+        }
+        $destinationName = if ($file.Name.StartsWith($filePrefix, [System.StringComparison]::OrdinalIgnoreCase)) { $file.Name } else { $filePrefix + $file.Name }
+        $destinationPath = Join-Path $destinationDirectory $destinationName
+        if ($sameDirectory -and (Resolve-IbisComparablePath -Path $file.FullName) -eq (Resolve-IbisComparablePath -Path $destinationPath)) {
+            continue
+        }
+        try {
+            Move-Item -LiteralPath $file.FullName -Destination $destinationPath -Force -ErrorAction Stop
+            $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $destinationPath; Status = 'Renamed'; Error = $null }
+        }
+        catch {
+            # Defender or another process can temporarily block one result file. Preserve it
+            # and let the calling module finish its remaining output and cleanup.
+            $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $destinationPath; Status = 'Failed'; Error = $_.Exception.Message }
+        }
+    }
+
+    if (-not $sameDirectory) {
+        $remaining = @(Get-ChildItem -LiteralPath $SourceDirectory -Force -ErrorAction SilentlyContinue)
+        if ($remaining.Count -eq 0) {
+            Remove-Item -LiteralPath $SourceDirectory -Force
+        }
+    }
+
+    $moved
+}
+
 function Rename-IbisChainsawOutput {
     [CmdletBinding()]
     param(
@@ -5544,25 +5682,7 @@ function Rename-IbisChainsawOutput {
         [string]$Hostname
     )
 
-    if (-not (Test-Path -LiteralPath $StagingDirectory -PathType Container)) {
-        return @()
-    }
-
-    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
-    $moved = @()
-    $files = @(Get-ChildItem -LiteralPath $StagingDirectory -File -Force -ErrorAction SilentlyContinue)
-    foreach ($file in $files) {
-        $newPath = Join-Path $OutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'Chainsaw-{0}' -ArgumentList @($file.Name))
-        Move-Item -LiteralPath $file.FullName -Destination $newPath -Force
-        $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $newPath }
-    }
-
-    $remaining = @(Get-ChildItem -LiteralPath $StagingDirectory -Force -ErrorAction SilentlyContinue)
-    if ($remaining.Count -eq 0) {
-        Remove-Item -LiteralPath $StagingDirectory -Force
-    }
-
-    $moved
+    Rename-IbisToolOutputFiles -SourceDirectory $StagingDirectory -OutputDirectory $OutputDirectory -Hostname $Hostname -ToolName 'Chainsaw'
 }
 
 function Invoke-IbisChainsawEventLogs {
@@ -5587,9 +5707,9 @@ function Invoke-IbisChainsawEventLogs {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisEventLogPath -SourceRoot $SourceRoot
-    $outputDirectory = Join-Path $hostOutputRoot 'EventLogs'
+    $outputDirectory = Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Chainsaw'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
-    $chainsawStagingDirectory = Join-Path $outputDirectory 'Chainsaw'
+    $chainsawStagingDirectory = Join-Path $workingsDirectory 'Staging'
 
     if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
         return [pscustomobject]@{ ModuleId = 'chainsaw'; Status = 'Skipped'; SourceDirectory = $sourceDirectory; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $null; Message = 'Windows Event Log folder was not found.' }
@@ -6566,6 +6686,7 @@ Export-ModuleMember -Function Rename-IbisUserArtifactToolOutput
 Export-ModuleMember -Function Copy-IbisPSReadLineHistory
 Export-ModuleMember -Function Invoke-IbisUserArtifacts
 Export-ModuleMember -Function Get-IbisEventLogPath
+Export-ModuleMember -Function Get-IbisEventLogToolOutputDirectory
 Export-ModuleMember -Function Invoke-IbisEvtxECmdEventLogs
 Export-ModuleMember -Function Get-IbisEvtxECmdCsvPath
 Export-ModuleMember -Function Get-IbisDuckDbEventLogQueryDefinition
@@ -6576,6 +6697,7 @@ Export-ModuleMember -Function Move-IbisExistingDirectoryToBackup
 Export-ModuleMember -Function Invoke-IbisHayabusaEventLogs
 Export-ModuleMember -Function Get-IbisHayabusaJsonlPath
 Export-ModuleMember -Function Invoke-IbisTakajoEventLogs
+Export-ModuleMember -Function Rename-IbisToolOutputFiles
 Export-ModuleMember -Function Rename-IbisChainsawOutput
 Export-ModuleMember -Function Invoke-IbisChainsawEventLogs
 Export-ModuleMember -Function Get-IbisUserAccessLogPath

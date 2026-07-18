@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.8`
+Current version: `v0.6.9`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -81,6 +81,16 @@ Outputs are grouped by hostname when a hostname is supplied:
 C:\Export\HOSTNAME\<Module>\...
 ```
 
+Windows Event Log processors keep their final results in separate folders:
+
+```text
+C:\Export\HOSTNAME\EventLogs\EvtxECmd\
+C:\Export\HOSTNAME\EventLogs\DuckDB\
+C:\Export\HOSTNAME\EventLogs\Hayabusa\
+C:\Export\HOSTNAME\EventLogs\Takajo\
+C:\Export\HOSTNAME\EventLogs\Chainsaw\
+```
+
 If the selected output path is already the host folder, Ibis avoids creating duplicate paths such as `HOSTNAME\HOSTNAME`. If the hostname field is blank, Ibis writes directly under the selected output folder and omits the hostname prefix from output filenames.
 
 Most analyst-facing output files use:
@@ -95,14 +105,14 @@ Examples:
 - `HOSTNAME-RR-System-Summary.json`
 - `HOSTNAME-EZ-Amcache.csv`
 - `HOSTNAME-SrumECmd-AppResourceUseInfo_Output.csv`
-- `HOSTNAME-Hayabusa-EventLogs-SuperVerbose.jsonl`
-- `HOSTNAME-Takajo-stack-logons.csv`
+- `EventLogs\Hayabusa\HOSTNAME-Hayabusa-EventLogs-SuperVerbose.jsonl`
+- `EventLogs\Takajo\HOSTNAME-Takajo-stack-logons.csv`
 - `HOSTNAME-BrowsingHistoryView-All-Users.csv`
 - `HOSTNAME-ForensicWebHistory-results.csv`
 - `HOSTNAME-MFTECmd-MFT-Output.csv`
 - `HOSTNAME-ParseUSBs-Log.txt`
 
-Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. The underscore keeps these transparency/audit folders at the top of normal file listings.
+Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. Empty Takajo workspaces are removed after processing.
 
 ## Processing Modules
 
@@ -158,7 +168,7 @@ Runs Hayabusa against Windows event logs and produces a super-verbose JSONL time
 
 ### Takajo
 
-Consumes Hayabusa JSONL output. Takajo is disabled unless Hayabusa is selected. Ibis runs `automagic` plus explicit stack commands and backs up any existing Takajo output folder first because Takajo will not write into an existing output directory.
+Consumes Hayabusa JSONL output. Takajo is disabled unless Hayabusa is selected. Ibis runs `automagic` plus explicit stack commands and backs up any existing Takajo output folder first because Takajo will not write into an existing output directory. Its summary is kept with the Takajo results; an empty temporary workspace is removed after processing.
 
 ### Chainsaw
 
@@ -266,5 +276,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.8`, both test runs pass with `127` tests.
+As of `v0.6.9`, both test runs pass with `130` tests.
 

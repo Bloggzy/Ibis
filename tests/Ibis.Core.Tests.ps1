@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.8'
+        $config.version | Should Be '0.6.9'
     }
 
     It 'records release history in the changelog' {
@@ -1885,6 +1885,10 @@ Describe 'Ibis Windows Event Log modules' {
         Get-IbisEventLogPath -SourceRoot 'E:\Evidence' | Should Be 'E:\Evidence\Windows\System32\winevt\Logs'
     }
 
+    It 'creates a separate EventLogs output directory for each tool' {
+        Get-IbisEventLogToolOutputDirectory -OutputRoot 'C:\Export' -Hostname 'TESTHOST' -ToolFolder 'Hayabusa' | Should Be 'C:\Export\TESTHOST\EventLogs\Hayabusa'
+    }
+
     It 'skips EvtxECmd cleanly when the event log folder is absent' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $sourceRoot = Join-Path $tempRoot 'Evidence'
@@ -1924,7 +1928,7 @@ Describe 'Ibis Windows Event Log modules' {
     }
 
     It 'calculates the EvtxECmd CSV path consumed by DuckDB summaries' {
-        Get-IbisEvtxECmdCsvPath -OutputRoot 'C:\Export' -Hostname 'TESTHOST' | Should Be 'C:\Export\TESTHOST\EventLogs\TESTHOST-EvtxECmd-EventLogs-Output.csv'
+        Get-IbisEvtxECmdCsvPath -OutputRoot 'C:\Export' -Hostname 'TESTHOST' | Should Be 'C:\Export\TESTHOST\EventLogs\EvtxECmd\TESTHOST-EvtxECmd-EventLogs-Output.csv'
     }
 
     It 'loads DuckDB event log query templates from editable SQL files' {
@@ -1971,7 +1975,7 @@ Describe 'Ibis Windows Event Log modules' {
     It 'continues DuckDB summary processing with failures noted when DuckDB is missing' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $outputRoot = Join-Path $tempRoot 'Output'
-        $eventLogRoot = Join-Path $outputRoot 'TESTHOST\EventLogs'
+        $eventLogRoot = Join-Path $outputRoot 'TESTHOST\EventLogs\EvtxECmd'
         New-Item -ItemType Directory -Path $eventLogRoot -Force | Out-Null
         'TimeCreated,Channel,EventId' | Out-File -LiteralPath (Join-Path $eventLogRoot 'TESTHOST-EvtxECmd-EventLogs-Output.csv') -Encoding ASCII
 
@@ -2026,7 +2030,7 @@ Describe 'Ibis Windows Event Log modules' {
     }
 
     It 'calculates the Hayabusa JSONL path consumed by Takajo' {
-        Get-IbisHayabusaJsonlPath -OutputRoot 'C:\Export' -Hostname 'TESTHOST' | Should Be 'C:\Export\TESTHOST\EventLogs\TESTHOST-Hayabusa-EventLogs-SuperVerbose.jsonl'
+        Get-IbisHayabusaJsonlPath -OutputRoot 'C:\Export' -Hostname 'TESTHOST' | Should Be 'C:\Export\TESTHOST\EventLogs\Hayabusa\TESTHOST-Hayabusa-EventLogs-SuperVerbose.jsonl'
     }
 
     It 'skips Takajo cleanly when the Hayabusa JSONL is absent' {
@@ -2051,7 +2055,7 @@ Describe 'Ibis Windows Event Log modules' {
     It 'continues Takajo processing with failures noted when Takajo is missing' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $outputRoot = Join-Path $tempRoot 'Output'
-        $eventLogRoot = Join-Path $outputRoot 'TESTHOST\EventLogs'
+        $eventLogRoot = Join-Path $outputRoot 'TESTHOST\EventLogs\Hayabusa'
         New-Item -ItemType Directory -Path $eventLogRoot -Force | Out-Null
         '{}' | Out-File -LiteralPath (Join-Path $eventLogRoot 'TESTHOST-Hayabusa-EventLogs-SuperVerbose.jsonl') -Encoding ASCII
 
@@ -2061,13 +2065,17 @@ Describe 'Ibis Windows Event Log modules' {
             $result.ModuleId | Should Be 'takajo'
             $result.Status | Should Be 'Failed'
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
+            $result.JsonPath | Should Match ([regex]::Escape('TESTHOST\EventLogs\Takajo\TESTHOST-Takajo.json'))
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\EventLogs\_Working\Takajo') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\EventLogs\_Working') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST\EventLogs\Takajo\_Working') | Should Be $false
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
 
-    It 'renames Chainsaw staged CSV outputs into the EventLogs folder' {
+    It 'renames Chainsaw staged CSV outputs into its own EventLogs folder' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $stagingRoot = Join-Path $tempRoot 'Chainsaw'
         $outputRoot = Join-Path $tempRoot 'EventLogs'
@@ -2081,6 +2089,32 @@ Describe 'Ibis Windows Event Log modules' {
             $moved.Count | Should Be 1
             Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST-Chainsaw-detections.csv') | Should Be $true
             Test-Path -LiteralPath $stagingRoot | Should Be $false
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'normalizes all Takajo result files, including nested automagic output files' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $takajoRoot = Join-Path $tempRoot 'Takajo'
+        $nestedRoot = Join-Path $takajoRoot 'automagic\summary'
+        $workingRoot = Join-Path $takajoRoot '_Working'
+        New-Item -ItemType Directory -Path $nestedRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path $workingRoot -Force | Out-Null
+        'csv' | Out-File -LiteralPath (Join-Path $takajoRoot 'timeline.csv') -Encoding ASCII
+        'json' | Out-File -LiteralPath (Join-Path $nestedRoot 'findings.json') -Encoding ASCII
+        'summary' | Out-File -LiteralPath (Join-Path $nestedRoot 'Summary.csv') -Encoding ASCII
+        'work' | Out-File -LiteralPath (Join-Path $workingRoot 'TESTHOST-Takajo.json') -Encoding ASCII
+
+        try {
+            $renamed = @(Rename-IbisToolOutputFiles -SourceDirectory $takajoRoot -OutputDirectory $takajoRoot -Hostname 'TESTHOST' -ToolName 'Takajo')
+
+            $renamed.Count | Should Be 3
+            Test-Path -LiteralPath (Join-Path $takajoRoot 'TESTHOST-Takajo-timeline.csv') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $nestedRoot 'TESTHOST-Takajo-findings.json') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $nestedRoot 'TESTHOST-Takajo-Summary.csv') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $workingRoot 'TESTHOST-Takajo.json') | Should Be $true
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
