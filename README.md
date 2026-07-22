@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.6.9`
+Current version: `v0.7.0`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -144,7 +144,7 @@ Runs PECmd against `Windows\Prefetch`. Timestamp-prefixed PECmd outputs are rena
 
 ### NTFS Metadata
 
-Uses MFTECmd to process `$MFT` and, where found, USN Journal `$J`. Ibis searches mounted image roots and Velociraptor NTFS upload locations.
+Uses MFTECmd to process `$MFT` and, where found, USN Journal `$J`. Ibis searches mounted image roots and Velociraptor NTFS upload locations, including common extracted names such as `$UsnJrnl_$J`, `$UsnJrnl-$J`, and standalone `$J` files within `$Extend`.
 
 ### SRUM
 
@@ -160,7 +160,7 @@ Runs EvtxECmd against `Windows\System32\winevt\Logs`.
 
 ### DuckDB Event Log Summaries
 
-Optional sub-module of Windows Event Logs. It consumes EvtxECmd CSV output and runs editable SQL templates from `queries\eventlogs` to produce summary CSVs such as logon and outbound RDP pivots.
+Optional sub-module of Windows Event Logs. It consumes EvtxECmd CSV output and runs editable SQL templates from `queries\eventlogs` to produce summary CSVs such as user-session activity and outbound RDP pivots. The user-session timeline includes logon/logoff, lock/unlock, screen saver, Window Station/RDP session, privilege, authentication, and system-boundary evidence while retaining source provenance and correlation identifiers.
 
 ### Hayabusa
 
@@ -276,5 +276,5 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.6.9`, both test runs pass with `130` tests.
+As of `v0.7.0`, both test runs pass with `136` tests.
 

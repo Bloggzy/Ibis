@@ -4,6 +4,18 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.0 - 2026-07-22
+
+- Expanded the DuckDB user-session activity timeline with workstation lock/unlock, screen saver, shutdown/restart, operating-system boundary, and clean/unexpected shutdown evidence.
+- Corrected Window Station reconnect/disconnect and NTLM credential-validation labels so they do not overstate RDP or domain-controller semantics.
+- Normalised Event ID, channel, username, logon type, Security logon ID, terminal session ID, related session, session name, and disconnect-reason fields across EvtxECmd event maps.
+- Retained event provenance and raw evidence fields in the DuckDB result, including computer, provider, record identifiers, source file, user SID, and payload.
+- Publish successful DuckDB results from a per-run staged CSV so a failed rerun preserves, and is clearly distinguished from, any previous analyst-facing output.
+- Added regression coverage for the expanded event set, correlation fields, provenance columns, and current version.
+- Expanded USN Journal `$J` discovery to identify bounded `$Extend` candidates extracted as `$UsnJrnl_$J`, `$UsnJrnl-$J`, standalone `$J`, or flattened `$UsnJrnl`, in addition to the existing mounted-volume and encoded Velociraptor forms.
+- Prefer canonical collection names over alternates and record the selected USN Journal discovery method and confidence in the NTFS metadata summary JSON.
+- Added regression coverage for renamed USN Journal candidates and canonical-name selection.
+
 ## v0.6.9 - 2026-07-18
 
 - Separated Windows Event Log outputs into dedicated `EvtxECmd`, `DuckDB`, `Hayabusa`, `Takajo`, and `Chainsaw` folders beneath `HOSTNAME\EventLogs`.

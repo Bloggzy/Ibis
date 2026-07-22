@@ -3690,17 +3690,22 @@ function Test-IbisNtfsSpecialFilePath {
     $false
 }
 
-function Find-IbisUsnJournalPath {
+function Find-IbisUsnJournalCandidate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [string]$SourceRoot
     )
 
-    $candidatePaths = New-Object System.Collections.Generic.List[string]
+    $candidatePaths = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     $addCandidate = {
-        param([string]$Path)
+        param(
+            [string]$Path,
+            [string]$DiscoveryMethod,
+            [string]$DiscoveryConfidence = 'High',
+            [bool]$AllowMountedStreamBase = $false
+        )
 
         if ([string]::IsNullOrWhiteSpace($Path)) {
             return
@@ -3709,7 +3714,32 @@ function Find-IbisUsnJournalPath {
         $key = $Path.ToLowerInvariant()
         if (-not $seen.ContainsKey($key)) {
             $seen[$key] = $true
-            $candidatePaths.Add($Path)
+            $candidatePaths.Add([pscustomobject]@{
+                Path = $Path
+                DiscoveryMethod = $DiscoveryMethod
+                DiscoveryConfidence = $DiscoveryConfidence
+                AllowMountedStreamBase = $AllowMountedStreamBase
+            })
+        }
+    }
+
+    $addExtractedCandidates = {
+        param([string]$ExtendDirectory)
+
+        if (-not (Test-Path -LiteralPath $ExtendDirectory -PathType Container)) {
+            return
+        }
+
+        foreach ($candidateFile in @(Get-ChildItem -LiteralPath $ExtendDirectory -File -Force -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            if ($candidateFile.Name -match '^\$UsnJrnl(?:[_\-.])\$J(?:\.[^\\/]+)?$') {
+                & $addCandidate $candidateFile.FullName 'RenamedUsnJournalStream' 'Medium'
+            }
+            elseif ($candidateFile.Name -match '^\$J(?:\.[^\\/]+)?$') {
+                & $addCandidate $candidateFile.FullName 'StandaloneJStream' 'Medium'
+            }
+            elseif ($candidateFile.Name -ieq '$UsnJrnl') {
+                & $addCandidate $candidateFile.FullName 'FlattenedUsnJournalStream' 'Low'
+            }
         }
     }
 
@@ -3719,7 +3749,8 @@ function Find-IbisUsnJournalPath {
         if ([string]::Equals($sourceRootPath.TrimEnd('\', '/'), $rootPath.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
             $drive = [System.IO.Path]::GetPathRoot($sourceRootPath).TrimEnd('\', '/')
             if (-not [string]::Equals($drive, 'C:', [System.StringComparison]::OrdinalIgnoreCase)) {
-                & $addCandidate ([System.IO.Path]::Combine($SourceRoot, '$Extend\$UsnJrnl:$J'))
+                & $addCandidate ([System.IO.Path]::Combine($SourceRoot, '$Extend\$UsnJrnl:$J')) 'MountedNtfsJournalStream' 'High' $true
+                & $addExtractedCandidates ([System.IO.Path]::Combine($SourceRoot, '$Extend'))
             }
         }
     }
@@ -3732,8 +3763,9 @@ function Find-IbisUsnJournalPath {
             break
         }
 
-        & $addCandidate ([System.IO.Path]::Combine($current, 'uploads\ntfs\%5C%5C.%5CC%3A\$Extend\$UsnJrnl%3A$J'))
-        & $addCandidate ([System.IO.Path]::Combine($current, 'ntfs\%5C%5C.%5CC%3A\$Extend\$UsnJrnl%3A$J'))
+        & $addCandidate ([System.IO.Path]::Combine($current, 'uploads\ntfs\%5C%5C.%5CC%3A\$Extend\$UsnJrnl%3A$J')) 'VelociraptorEncodedJournalStream'
+        & $addCandidate ([System.IO.Path]::Combine($current, 'ntfs\%5C%5C.%5CC%3A\$Extend\$UsnJrnl%3A$J')) 'NtfsUploadEncodedJournalStream'
+        & $addExtractedCandidates ([System.IO.Path]::Combine($current, '$Extend'))
 
         foreach ($ntfsRoot in @(
             [System.IO.Path]::Combine($current, 'uploads\ntfs'),
@@ -3741,8 +3773,10 @@ function Find-IbisUsnJournalPath {
         )) {
             if (Test-Path -LiteralPath $ntfsRoot -PathType Container) {
                 foreach ($deviceDirectory in @(Get-ChildItem -LiteralPath $ntfsRoot -Directory -Force -ErrorAction SilentlyContinue)) {
-                    & $addCandidate ([System.IO.Path]::Combine($deviceDirectory.FullName, '$Extend\$UsnJrnl%3A$J'))
-                    & $addCandidate ([System.IO.Path]::Combine($deviceDirectory.FullName, '$Extend\$UsnJrnl:$J'))
+                    $extendDirectory = [System.IO.Path]::Combine($deviceDirectory.FullName, '$Extend')
+                    & $addCandidate ([System.IO.Path]::Combine($extendDirectory, '$UsnJrnl%3A$J')) 'EncodedJournalStream'
+                    & $addCandidate ([System.IO.Path]::Combine($extendDirectory, '$UsnJrnl:$J')) 'LiteralJournalStream'
+                    & $addExtractedCandidates $extendDirectory
                 }
             }
         }
@@ -3754,10 +3788,32 @@ function Find-IbisUsnJournalPath {
         $current = $parent
     }
 
-    foreach ($candidatePath in $candidatePaths) {
-        if (Test-IbisNtfsSpecialFilePath -Path $candidatePath) {
-            return $candidatePath
+    foreach ($candidate in $candidatePaths) {
+        $found = if ($candidate.AllowMountedStreamBase) {
+            Test-IbisNtfsSpecialFilePath -Path $candidate.Path
         }
+        else {
+            Test-Path -LiteralPath $candidate.Path -PathType Leaf
+        }
+
+        if ($found) {
+            return $candidate
+        }
+    }
+
+    $null
+}
+
+function Find-IbisUsnJournalPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot
+    )
+
+    $candidate = Find-IbisUsnJournalCandidate -SourceRoot $SourceRoot
+    if ($null -ne $candidate) {
+        return $candidate.Path
     }
 
     $null
@@ -3892,7 +3948,8 @@ function Invoke-IbisNtfsMetadata {
     $workingsDirectory = Join-Path $outputDirectory '_Working'
 
     $mftPath = Find-IbisNtfsArtifactPath -SourceRoot $SourceRoot -ArtifactName '$MFT'
-    $usnJournalPath = Find-IbisUsnJournalPath -SourceRoot $SourceRoot
+    $usnJournalCandidate = Find-IbisUsnJournalCandidate -SourceRoot $SourceRoot
+    $usnJournalPath = if ($null -ne $usnJournalCandidate) { $usnJournalCandidate.Path } else { $null }
     $locatedArtifacts = @(
         [pscustomobject]@{
             Name = '$MFT'
@@ -3907,6 +3964,8 @@ function Invoke-IbisNtfsMetadata {
             Name = '$UsnJrnl:$J'
             SourcePath = $usnJournalPath
             MftPath = $mftPath
+            DiscoveryMethod = if ($null -ne $usnJournalCandidate) { $usnJournalCandidate.DiscoveryMethod } else { $null }
+            DiscoveryConfidence = if ($null -ne $usnJournalCandidate) { $usnJournalCandidate.DiscoveryConfidence } else { $null }
             OutputFileName = (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'MFTECmd-UsnJrnl-J-Output.csv')
             Found = -not [string]::IsNullOrWhiteSpace($usnJournalPath)
             ReadyToProcess = (-not [string]::IsNullOrWhiteSpace($usnJournalPath) -and -not [string]::IsNullOrWhiteSpace($mftPath))
@@ -3917,7 +3976,7 @@ function Invoke-IbisNtfsMetadata {
                 'USN Journal $J was found, but $MFT was not found; MFTECmd requires $MFT for USN Journal processing.'
             }
             else {
-                'USN Journal $J and $MFT were found.'
+                "USN Journal `$J and `$MFT were found via $($usnJournalCandidate.DiscoveryMethod) discovery."
             }
         }
     )
@@ -5124,7 +5183,7 @@ function Get-IbisDuckDbEventLogQueryDefinition {
         }
         [pscustomobject]@{
             Id = 'logons'
-            Name = 'Event log user logons'
+            Name = 'Event log user-session activity'
             QueryPath = Join-Path $queryRoot 'logons.sql'
             OutputFileNameFormat = 'DuckDB-Event-Log-User-Logons.csv'
         }
@@ -5210,6 +5269,7 @@ function Invoke-IbisDuckDbEventLogSummary {
     $tool = Get-IbisToolDefinitionById -ToolDefinitions $ToolDefinitions -Id 'duckdb'
     $queryDefinitions = @(Get-IbisDuckDbEventLogQueryDefinition -ProjectRoot $ProjectRoot)
     $toolResults = @()
+    $runToken = [System.Guid]::NewGuid().ToString('N')
     if ($null -eq $tool) {
         $toolResults += [pscustomobject]@{ ToolId = 'duckdb'; QueryId = 'all'; InputPath = $evtxCsvPath; Status = 'Failed'; ExitCode = $null; Message = 'DuckDB CLI is not configured.' }
     }
@@ -5222,27 +5282,46 @@ function Invoke-IbisDuckDbEventLogSummary {
             foreach ($queryDefinition in $queryDefinitions) {
                 $outputPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix $queryDefinition.OutputFileNameFormat)
                 $renderedSqlPath = Join-Path $workingsDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'DuckDB-{0}.sql' -ArgumentList @($queryDefinition.Id))
+                $stagedOutputPath = Join-Path $workingsDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'DuckDB-{0}-{1}.staged.csv' -ArgumentList @($queryDefinition.Id, $runToken))
                 if (-not (Test-Path -LiteralPath $queryDefinition.QueryPath -PathType Leaf)) {
-                    $toolResults += [pscustomobject]@{ ToolId = $tool.id; QueryId = $queryDefinition.Id; QueryPath = $queryDefinition.QueryPath; OutputPath = $outputPath; RenderedSqlPath = $null; Status = 'Failed'; ExitCode = $null; Message = "DuckDB SQL template was not found: $($queryDefinition.QueryPath)" }
+                    $toolResults += [pscustomobject]@{ ToolId = $tool.id; QueryId = $queryDefinition.Id; QueryPath = $queryDefinition.QueryPath; OutputPath = $outputPath; StagedOutputPath = $null; Published = $false; RenderedSqlPath = $null; Status = 'Failed'; ExitCode = $null; Message = "DuckDB SQL template was not found: $($queryDefinition.QueryPath)" }
                     continue
                 }
 
-                $sql = Expand-IbisDuckDbSqlTemplate -TemplatePath $queryDefinition.QueryPath -InputCsvPath $evtxCsvPath -OutputCsvPath $outputPath
+                $sql = Expand-IbisDuckDbSqlTemplate -TemplatePath $queryDefinition.QueryPath -InputCsvPath $evtxCsvPath -OutputCsvPath $stagedOutputPath
                 $sql | Out-File -LiteralPath $renderedSqlPath -Encoding UTF8
                 $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList @('-c', $sql) -WorkingDirectory (Split-Path -Path $toolPath -Parent)
+                $published = $false
+                $publishError = $null
+                if ($processResult.ExitCode -eq 0 -and (Test-Path -LiteralPath $stagedOutputPath -PathType Leaf)) {
+                    try {
+                        Move-Item -LiteralPath $stagedOutputPath -Destination $outputPath -Force -ErrorAction Stop
+                        $published = $true
+                    }
+                    catch {
+                        $publishError = $_.Exception.Message
+                    }
+                }
                 if ($processResult.ExitCode -ne 0) {
                     $processResult.StandardError | Out-File -LiteralPath (Join-Path $workingsDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'DuckDB-{0}.stderr.txt' -ArgumentList @($queryDefinition.Id))) -Encoding UTF8
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($publishError)) {
+                    $publishError | Out-File -LiteralPath (Join-Path $workingsDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'DuckDB-{0}.stderr.txt' -ArgumentList @($queryDefinition.Id))) -Encoding UTF8
                 }
 
                 $status = 'Completed'
                 $message = "$($queryDefinition.Name) completed."
                 if ($processResult.ExitCode -ne 0) {
                     $status = 'Failed'
-                    $message = "$($queryDefinition.Name) exited with code $($processResult.ExitCode)."
+                    $message = "$($queryDefinition.Name) exited with code $($processResult.ExitCode); any previous final output was preserved."
                 }
-                elseif (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+                elseif (-not [string]::IsNullOrWhiteSpace($publishError)) {
+                    $status = 'Failed'
+                    $message = "$($queryDefinition.Name) completed, but its staged output could not be published: $publishError"
+                }
+                elseif (-not $published) {
                     $status = 'Completed With Warnings'
-                    $message = "$($queryDefinition.Name) completed, but the expected CSV was not found."
+                    $message = "$($queryDefinition.Name) completed, but the expected staged CSV was not found; any previous final output was preserved."
                 }
 
                 $toolResults += [pscustomobject]@{
@@ -5251,6 +5330,8 @@ function Invoke-IbisDuckDbEventLogSummary {
                     QueryPath = $queryDefinition.QueryPath
                     InputPath = $evtxCsvPath
                     OutputPath = $outputPath
+                    StagedOutputPath = $stagedOutputPath
+                    Published = $published
                     RenderedSqlPath = $renderedSqlPath
                     Status = $status
                     ExitCode = $processResult.ExitCode

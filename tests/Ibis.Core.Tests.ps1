@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.6.9'
+        $config.version | Should Be '0.7.0'
     }
 
     It 'records release history in the changelog' {
@@ -1375,6 +1375,53 @@ Describe 'Ibis AppCompatCache, Prefetch, and NTFS metadata' {
         }
     }
 
+    It 'finds renamed and standalone extracted USN Journal $J files under $Extend' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Collection\uploads\auto\C%3A'
+        $extendRoot = Join-Path $tempRoot 'Collection\uploads\ntfs\%5C%5C.%5CC%3A\$Extend'
+        New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+
+        try {
+            foreach ($name in @('$UsnJrnl_$J', '$UsnJrnl-$J', '$J', '$UsnJrnl')) {
+                $filePath = Join-Path $extendRoot $name
+                'usn' | Out-File -LiteralPath $filePath -Encoding ASCII
+                Find-IbisUsnJournalPath -SourceRoot $sourceRoot | Should Be $filePath
+                Remove-Item -LiteralPath $filePath -Force
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'prefers the canonical encoded USN Journal name and records discovery details' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Collection\uploads\auto\C%3A'
+        $ntfsRoot = Join-Path $tempRoot 'Collection\uploads\ntfs\%5C%5C.%5CC%3A'
+        $extendRoot = Join-Path $ntfsRoot '$Extend'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        $canonicalPath = Join-Path $extendRoot '$UsnJrnl%3A$J'
+        New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+        'mft' | Out-File -LiteralPath (Join-Path $ntfsRoot '$MFT') -Encoding ASCII
+        'usn' | Out-File -LiteralPath $canonicalPath -Encoding ASCII
+        'alternate' | Out-File -LiteralPath (Join-Path $extendRoot '$UsnJrnl_$J') -Encoding ASCII
+
+        try {
+            Find-IbisUsnJournalPath -SourceRoot $sourceRoot | Should Be $canonicalPath
+            $result = Invoke-IbisNtfsMetadata -ToolsRoot $tempRoot -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot $outputRoot -Hostname 'TESTHOST'
+            $summary = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+            $usn = $summary.LocatedArtifacts | Where-Object { $_.Name -eq '$UsnJrnl:$J' } | Select-Object -First 1
+
+            $usn.DiscoveryMethod | Should Be 'NtfsUploadEncodedJournalStream'
+            $usn.DiscoveryConfidence | Should Be 'High'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'treats a USN Journal stream path as present when its base file exists' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $extendRoot = Join-Path $tempRoot '$Extend'
@@ -1951,6 +1998,46 @@ Describe 'Ibis Windows Event Log modules' {
         $sql | Should Match "Result''s.csv"
         $sql | Should Not Match '\{\{INPUT_CSV\}\}'
         $sql | Should Not Match '\{\{OUTPUT_CSV\}\}'
+    }
+
+    It 'defines the supported user-session activity events and corrected labels' {
+        $sql = Get-Content -LiteralPath (Join-Path $projectRoot 'queries\eventlogs\logons.sql') -Raw
+
+        $sql | Should Match '4624, 4625, 4634, 4647, 4648, 4672, 4776, 4778, 4779, 4800, 4801, 4802, 4803'
+        $sql | Should Match "4800 THEN 'WorkstationLock'"
+        $sql | Should Match "4801 THEN 'WorkstationUnlock'"
+        $sql | Should Match "4802 THEN 'ScreenSaverInvoked'"
+        $sql | Should Match "4803 THEN 'ScreenSaverDismissed'"
+        $sql | Should Match "4778 THEN 'WindowStationReconnect'"
+        $sql | Should Match "4779 THEN 'WindowStationDisconnect'"
+        $sql | Should Match "4776 THEN 'NTLMCredentialValidation'"
+        $sql | Should Not Match "4776 THEN 'DCAuthenticationAttempt'"
+    }
+
+    It 'retains user-session correlation and source provenance fields' {
+        $sql = Get-Content -LiteralPath (Join-Path $projectRoot 'queries\eventlogs\logons.sql') -Raw
+
+        foreach ($fieldName in @('SecurityLogonID', 'TerminalSessionID', 'RelatedSessionID', 'SessionName', 'DisconnectReason', 'RecordNumber', 'EventRecordId', 'Level', 'Provider', 'ProcessId', 'ThreadId', 'Computer', 'ChunkNumber', 'UserId', 'HiddenRecord', 'SourceFile', 'Keywords', 'ExtraDataOffset', 'Payload')) {
+            $sql | Should Match ([regex]::Escape($fieldName))
+        }
+        $sql | Should Match 'all_varchar = true'
+        $sql | Should Match 'TRY_CAST\(TRIM\(EventId\) AS INTEGER\)'
+    }
+
+    It 'stages DuckDB results before replacing a final analyst-facing output' {
+        $moduleText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+
+        $moduleText | Should Match 'StagedOutputPath'
+        $moduleText | Should Match 'Move-Item -LiteralPath \$stagedOutputPath -Destination \$outputPath -Force'
+        $moduleText | Should Match 'any previous final output was preserved'
+    }
+
+    It 'includes representative synthetic rows for each newly covered workstation state event' {
+        $events = @(Import-Csv -LiteralPath (Join-Path $projectRoot 'tests\fixtures\eventlogs\user-session-events.csv'))
+
+        foreach ($eventId in @('4647', '4800', '4801', '4802', '4803')) {
+            @($events | Where-Object { $_.EventId -eq $eventId }).Count | Should Be 1
+        }
     }
 
     It 'skips DuckDB summaries cleanly when the EvtxECmd CSV is absent' {
