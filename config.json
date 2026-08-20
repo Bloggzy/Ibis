@@ -1,9 +1,9 @@
 ﻿{
     "name":  "Ibis",
-    "version":  "0.7.0",
+    "version":  "0.7.1",
     "defaultToolsRoot":  "C:\\DFIR\\Tools",
-    "defaultSourceRoot":  "C:\\Source\\Collection-DESKTOP-0TF6I73-2026-04-25T01_46_57Z\\uploads\\auto\\C%3A",
-    "defaultOutputRoot":  "C:\\Export\\DESKTOP-0TF6I73",
+    "defaultSourceRoot":  "C:\\Source\\Evidence",
+    "defaultOutputRoot":  "C:\\Export\\Output",
     "defaultHostname":  "HOSTNAME",
     "completionBeepEnabled":  true,
     "toolDefinitionPath":  "tools",
@@ -130,7 +130,7 @@
                     {
                         "id":  "usb",
                         "name":  "ParseUSBs",
-                        "hint":  "Runs ParseUSBs to extract USB device artefacts. WARNING: tool applies transaction updates to dirty hives.",
+                        "hint":  "Runs ParseUSBs against staged system and user hive copies, then a separate staged volume-enrichment pass for USB artefacts. Any transaction updates remain in the staging area; source evidence is unchanged.",
                         "enabledByDefault":  true,
                         "status":  "implemented"
                     }

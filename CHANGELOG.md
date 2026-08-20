@@ -4,6 +4,12 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.1 - 2026-07-25
+
+- Stage ParseUSBs registry configuration files and transaction logs beneath the module working directory before the tool runs, ensuring any transaction replay remains isolated from source evidence.
+- Clear the read-only attribute on Ibis working copies of evidence files so registry transaction replay by `rla` and ParseUSBs can write to the cached copy. Source evidence keeps its original attributes and is never written to.
+- Added `tests\manual\Verify-ParseUsbContainment.ps1`, a manual whole-module check that proves ParseUSBs processing leaves a read-only evidence tree unchanged and is only ever given staged paths.
+
 ## v0.7.0 - 2026-07-22
 
 - Expanded the DuckDB user-session activity timeline with workstation lock/unlock, screen saver, shutdown/restart, operating-system boundary, and clean/unexpected shutdown evidence.
@@ -98,7 +104,7 @@ Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch rel
 ## v0.5.6 - 2026-04-27
 
 - Refreshed `README.md` as a prospective user/GitHub guide for the current GUI, workflow, tools, modules, logging, configuration, and test process.
-- Refreshed `AGENTS.md` as a from-scratch rebuild and development playbook aligned to the current architecture and implementation lessons.
+- Refreshed `AGENTS.md` as a development playbook aligned to the current architecture and implementation lessons.
 - Updated `TODO.md` to separate completed functionality from remaining validation, hardening, packaging, and design follow-ups.
 
 ## v0.5.5 - 2026-04-27

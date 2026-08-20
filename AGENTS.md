@@ -4,9 +4,9 @@
 
 Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensic tooling and runs selected first-pass processing modules against Windows evidence from mounted disk images, Velociraptor/KAPE triage collections, or similar exports.
 
-The project is a rebuild of an older single-file script. Preserve the analyst workflow knowledge, command lines, and edge cases from the old script, but keep this implementation maintainable, testable, and extendable.
+The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.6.9`.
+Current version: `v0.7.1`.
 
 ## Build From Scratch Shape
 
@@ -228,9 +228,9 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - Takajo: consume Hayabusa JSONL; run `automagic` and stack commands; back up output folder first.
 - Chainsaw: process event logs and normalise staged output.
 - UAL/SUM: run SumECmd against `Windows\System32\LogFiles\Sum`; rename timestamped output.
-- Browser History: BrowsingHistoryView with offline `Users` folder.
-- Forensic Webhistory: run with `--date-format iso`.
-- ParseUSBs: trim trailing slashes from source path; capture stdout log.
+- Browser History: BrowsingHistoryView with offline `Users` folder; write results beneath `WebHistory\BrowsingHistoryView`.
+- Forensic Webhistory: run with `--date-format iso`; write results beneath `WebHistory\ForensicWebHistory`.
+- ParseUSBs: stage system hives and transaction logs, per-user `NTUSER.dat` hives and logs, user LNK files, and supported USB event logs under `USB\_Working`; run explicit staged registry arguments for attribution plus a separate staged volume-mode enrichment pass; capture per-phase stdout/stderr and keep their outputs distinct.
 
 ## Versioning
 
@@ -262,6 +262,8 @@ Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, F
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
+Keep slower whole-module or evidence-safety checks that cannot run in both editions under `tests\manual`, and run them by hand after changing the behaviour they cover.
+
 Add tests for:
 
 - Tool definition parsing.
@@ -287,7 +289,7 @@ Add tests for:
 ## Workflow Notes
 
 - Read `README.md`, `TODO.md`, `CHANGELOG.md`, and this file before implementation work.
-- When using the old script as reference, extract intent, command patterns, and edge cases; do not preserve accidental complexity.
+- Retain useful workflow intent, command patterns, and edge cases without preserving accidental complexity.
 - Prefer small, reviewable changes.
 - If a design choice affects analyst workflow, document the tradeoff before implementing it.
 

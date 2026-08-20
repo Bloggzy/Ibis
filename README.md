@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.0`
+Current version: `v0.7.1`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -23,9 +23,51 @@ Ibis is pre-1.0 beta software. The current version and default settings are stor
 
 Ibis treats the evidence source as read-only and performs hive transaction replay against cached working copies. However, Ibis cannot control every behaviour of every external forensic tool. For best forensic hygiene, mount images read-only or process a copy of a triage pack.
 
+## Getting the Files
+
+Download the release ZIP, then extract it before you run anything.
+
+Windows marks files that came from the internet with a "mark of the web" flag. If you extract the ZIP with the built-in Windows extractor (`Extract All` in File Explorer), that mark is copied onto every extracted file. PowerShell then treats the scripts as untrusted and shows security warnings, or refuses to run them, depending on your execution policy.
+
+Pick one of the two options below.
+
+### Option 1: Extract with 7-Zip (recommended)
+
+7-Zip does not copy the mark of the web onto the extracted files, so there is nothing to clean up afterwards:
+
+```powershell
+7z x Ibis.zip -oC:\Tools\Ibis
+```
+
+Any archive tool that preserves this behaviour works. Only the built-in Windows extractor is a problem.
+
+### Option 2: Unblock the PowerShell files
+
+If you already extracted with the Windows extractor, unblock the three PowerShell files. From the project folder:
+
+```powershell
+Get-ChildItem -Path .\Run-Ibis.ps1, .\modules\Ibis.Core.psm1, .\modules\Ibis.Gui.psm1 | Unblock-File
+```
+
+The three files are:
+
+- `Run-Ibis.ps1`
+- `modules\Ibis.Core.psm1`
+- `modules\Ibis.Gui.psm1`
+
+You can also right-click each file, choose `Properties`, tick `Unblock`, and click `OK`.
+
+Unblocking the ZIP before extracting has the same effect:
+
+```powershell
+Unblock-File -Path .\Ibis.zip
+```
+
+If the GUI does start, the `Setup tools` tab reports any remaining internet-origin marks on Ibis files and offers to remove them after confirmation. Ibis does not change execution policy and does not bypass Group Policy, AppLocker, or WDAC.
+
 ## Quick Start
 
-From the project folder:
+Extract the release as described in `Getting the Files` first, then from the project folder:
 
 ```powershell
 .\Run-Ibis.ps1
@@ -91,6 +133,13 @@ C:\Export\HOSTNAME\EventLogs\Takajo\
 C:\Export\HOSTNAME\EventLogs\Chainsaw\
 ```
 
+Browser-history processors likewise retain separate results beneath one parent folder:
+
+```text
+C:\Export\HOSTNAME\WebHistory\BrowsingHistoryView\
+C:\Export\HOSTNAME\WebHistory\ForensicWebHistory\
+```
+
 If the selected output path is already the host folder, Ibis avoids creating duplicate paths such as `HOSTNAME\HOSTNAME`. If the hostname field is blank, Ibis writes directly under the selected output folder and omits the hostname prefix from output filenames.
 
 Most analyst-facing output files use:
@@ -107,10 +156,11 @@ Examples:
 - `HOSTNAME-SrumECmd-AppResourceUseInfo_Output.csv`
 - `EventLogs\Hayabusa\HOSTNAME-Hayabusa-EventLogs-SuperVerbose.jsonl`
 - `EventLogs\Takajo\HOSTNAME-Takajo-stack-logons.csv`
-- `HOSTNAME-BrowsingHistoryView-All-Users.csv`
-- `HOSTNAME-ForensicWebHistory-results.csv`
+- `WebHistory\BrowsingHistoryView\HOSTNAME-BrowsingHistoryView-All-Users.csv`
+- `WebHistory\ForensicWebHistory\HOSTNAME-ForensicWebHistory-results.csv`
 - `HOSTNAME-MFTECmd-MFT-Output.csv`
-- `HOSTNAME-ParseUSBs-Log.txt`
+- `USB\_Working\HOSTNAME-ParseUSBs-RegistryHives-Log.txt`
+- `USB\_Working\HOSTNAME-ParseUSBs-VolumeEnrichment-Log.txt`
 
 Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. Empty Takajo workspaces are removed after processing.
 
@@ -180,15 +230,15 @@ Runs SumECmd against `Windows\System32\LogFiles\Sum`. Timestamp-prefixed SumECmd
 
 ### Browser History
 
-Runs NirSoft BrowsingHistoryView against offline user browser history artefacts.
+Runs NirSoft BrowsingHistoryView against offline user browser history artefacts. Its results are written beneath `WebHistory\BrowsingHistoryView`.
 
 ### Forensic Webhistory
 
-Runs `forensic-webhistory scan -d <source> -o <output> --date-format iso` to provide an additional browser history parser with ISO date output.
+Runs `forensic-webhistory scan -d <source> -o <output> --date-format iso` to provide an additional browser history parser with ISO date output. Its results are written beneath `WebHistory\ForensicWebHistory`.
 
 ### ParseUSBs
 
-Runs parseusbs to extract USB artefact information. The module is labelled `ParseUSBs` in the GUI.
+Runs parseusbs to extract USB artefact information without writing to the evidence source. Ibis creates a selective, volume-shaped copy in `USB\_Working\ParseUSBs-Evidence-Staging`: system hives and transaction logs, each available `NTUSER.dat` and its logs, user LNK files, and the two USB-relevant event logs when present. It first runs explicit staged `SYSTEM`, `SOFTWARE`, and per-user `NTUSER.dat` arguments for reliable registry and MountPoints2 attribution, then runs staged volume mode for event-log and LNK enrichment. The two result sets are kept separate with `ParseUSBs-RegistryHives-...` and `ParseUSBs-VolumeEnrichment-...` filenames, with per-phase stdout/stderr and provenance in the USB summary JSON. This keeps any transaction replay or hive updates away from source evidence. The module is labelled `ParseUSBs` in the GUI.
 
 ## Tool Management
 
@@ -251,12 +301,12 @@ The `Logs` tab can open the current log file or the logs directory.
 `config.json` stores:
 
 - Application name and version.
-- Default tools, source, and output paths.
+- Shared, generic default tools, source, and output paths.
 - Default hostname placeholder.
 - Completion beep setting.
 - Processing module list, labels, hover hints, default enabled state, and implementation status.
 
-Ibis updates the tools/source/output paths and completion beep setting when changed in the GUI so the next launch resumes from the previous choices.
+Ibis keeps the shared `config.json` defaults generic. When changed in the GUI, tools/source/output paths and the completion-beep setting are saved to the local, Git-ignored `config.local.json` so the next launch resumes from the previous choices without placing case paths in the repository.
 
 ## Development and Tests
 
@@ -276,5 +326,11 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.0`, both test runs pass with `136` tests.
+As of `v0.7.1`, both test runs pass with `142` tests.
+
+`tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .	ests\manual\Verify-ParseUsbContainment.ps1
+```
 

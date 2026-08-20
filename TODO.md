@@ -1,11 +1,11 @@
 # TODO
 
-This roadmap reflects the current state as of `v0.7.0`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
+This roadmap reflects the current state as of `v0.7.1`. The major first-pass processing modules are implemented; remaining work is mostly validation against real evidence, hardening, packaging, and richer reporting.
 
 ## Documentation
 
 - [x] Refresh `README.md` as a prospective GitHub/user guide.
-- [x] Refresh `AGENTS.md` as the rebuild/development playbook.
+- [x] Maintain `AGENTS.md` as the development playbook.
 - [x] Maintain `CHANGELOG.md` and `config.json` version together.
 - [x] Include Apache 2.0 licence file.
 - [x] Include disclaimer and licence wording in the GUI.
@@ -105,7 +105,9 @@ This roadmap reflects the current state as of `v0.7.0`. The major first-pass pro
 - [x] Record move/rename hints during the related module rather than batching them at the end of the run.
 - [x] Record Ibis file audit events for create/update/move/remove operations where practical.
 - [x] Log GUI shutdown.
-- [x] Preserve tools/source/output paths and completion beep setting in `config.json`.
+- [x] Preserve tools/source/output paths and completion beep setting between launches.
+- [x] Keep shared defaults generic and save local GUI path preferences in Git-ignored `config.local.json`.
+- [x] Group browser-history tool outputs beneath per-tool `WebHistory` subdirectories.
 
 ## Completed Processing Modules
 
@@ -130,6 +132,7 @@ This roadmap reflects the current state as of `v0.7.0`. The major first-pass pro
 - [x] Browser history with BrowsingHistoryView.
 - [x] Browser history with forensic-webhistory.
 - [x] ParseUSBs.
+- [x] Stage ParseUSBs registry configuration files so hive transaction updates cannot affect source evidence.
 
 ## Validation With Real Evidence
 
@@ -180,7 +183,7 @@ This roadmap reflects the current state as of `v0.7.0`. The major first-pass pro
 - [ ] Should each processing module be split into its own `.psm1` as `Ibis.Core.psm1` grows?
 - [ ] Should downloads support explicit "force reinstall" and "upgrade only if newer" modes?
 - [ ] Should there be a "prepare evidence" phase that only cleans/caches hives before all modules?
-- [ ] Should module output folder names avoid spaces everywhere, or preserve familiar names from the old script?
+- [ ] Should module output folder names avoid spaces everywhere, or preserve familiar names from established analyst workflows?
 - [ ] Should skipped modules write JSON summaries, or is no output preferable when evidence is absent?
 - [ ] Should the GUI expose a per-module advanced settings panel?
 

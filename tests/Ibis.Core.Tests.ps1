@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.0'
+        $config.version | Should Be '0.7.1'
     }
 
     It 'records release history in the changelog' {
@@ -21,7 +21,7 @@ Describe 'Ibis core configuration' {
         $changelog | Should Match 'v0\.5\.0'
     }
 
-    It 'saves path settings back to config.json' {
+    It 'saves path settings locally without changing the shared config' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $projectRoot 'config.json') -Destination (Join-Path $tempRoot 'config.json') -Force
@@ -39,6 +39,10 @@ Describe 'Ibis core configuration' {
             $saved.defaultSourceRoot | Should Be 'E:\Evidence'
             $saved.defaultOutputRoot | Should Be 'D:\Output'
             $saved.completionBeepEnabled | Should Be $false
+            Test-Path -LiteralPath (Join-Path $tempRoot 'config.local.json') | Should Be $true
+            $sharedConfig = Get-Content -LiteralPath (Join-Path $tempRoot 'config.json') -Raw | ConvertFrom-Json
+            $sharedConfig.defaultSourceRoot | Should Be 'C:\Source\Evidence'
+            $sharedConfig.defaultOutputRoot | Should Be 'C:\Export\Output'
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -821,7 +825,7 @@ Describe 'Ibis system summary' {
         $summary.IpAddressSummary.Count | Should Be 2
     }
 
-    It 'formats a concise text summary like the original script' {
+    It 'formats a concise text summary' {
         $summary = [pscustomobject]@{
             HostName = 'TESTHOST'
             OperatingSystem = 'Windows 10 Pro (Build: 19045)'
@@ -965,6 +969,134 @@ Describe 'Ibis Windows Registry hives' {
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
+    }
+
+    It 'stages ParseUSBs registry files without changing the evidence copies' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $hiveRoot = Join-Path $sourceRoot 'Windows\System32\config'
+        $stagingRoot = Join-Path $tempRoot 'Staging'
+        $sourceHive = Join-Path $hiveRoot 'SYSTEM'
+        $sourceLog = Join-Path $hiveRoot 'SYSTEM.LOG1'
+
+        New-Item -ItemType Directory -Path $hiveRoot -Force | Out-Null
+        'original hive' | Out-File -LiteralPath $sourceHive -Encoding ASCII
+        'transaction log' | Out-File -LiteralPath $sourceLog -Encoding ASCII
+
+        try {
+            $result = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $sourceRoot -StagingDirectory $stagingRoot
+            'staged change' | Out-File -LiteralPath (Join-Path $stagingRoot 'Windows\System32\config\SYSTEM') -Encoding ASCII
+
+            $result.Status | Should Be 'Staged'
+            $result.FileCount | Should Be 2
+            Test-Path -LiteralPath (Join-Path $stagingRoot 'Windows\System32\config\SYSTEM.LOG1') | Should Be $true
+            (Get-Content -LiteralPath $sourceHive -Raw).Trim() | Should Be 'original hive'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'stages ParseUSBs user hives, LNK files, and supported event logs without changing source evidence' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $hiveRoot = Join-Path $sourceRoot 'Windows\System32\config'
+        $profileRoot = Join-Path $sourceRoot 'Users\Analyst'
+        $recentRoot = Join-Path $profileRoot 'AppData\Roaming\Microsoft\Windows\Recent'
+        $eventLogRoot = Join-Path $sourceRoot 'Windows\System32\winevt\Logs'
+        $stagingRoot = Join-Path $tempRoot 'Staging'
+
+        New-Item -ItemType Directory -Path $hiveRoot, $recentRoot, $eventLogRoot -Force | Out-Null
+        'system' | Out-File -LiteralPath (Join-Path $hiveRoot 'SYSTEM') -Encoding ASCII
+        'software' | Out-File -LiteralPath (Join-Path $hiveRoot 'SOFTWARE') -Encoding ASCII
+        'user hive' | Out-File -LiteralPath (Join-Path $profileRoot 'NTUSER.dat') -Encoding ASCII
+        'user log' | Out-File -LiteralPath (Join-Path $profileRoot 'NTUSER.dat.LOG1') -Encoding ASCII
+        'lnk evidence' | Out-File -LiteralPath (Join-Path $recentRoot 'usb.lnk') -Encoding ASCII
+        'partition log' | Out-File -LiteralPath (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%4Diagnostic.evtx') -Encoding ASCII
+
+        try {
+            $result = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $sourceRoot -StagingDirectory $stagingRoot
+            'changed stage' | Out-File -LiteralPath (Join-Path $stagingRoot 'Users\Analyst\NTUSER.dat') -Encoding ASCII
+
+            $result.UserHiveCount | Should Be 1
+            $result.LnkFileCount | Should Be 1
+            $result.EventLogCount | Should Be 1
+            Test-Path -LiteralPath (Join-Path $stagingRoot 'Users\Analyst\NTUSER.dat.LOG1') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $stagingRoot 'Users\Analyst\AppData\Roaming\Microsoft\Windows\Recent\usb.lnk') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $stagingRoot 'Windows\System32\winevt\Logs\Microsoft-Windows-Partition%4Diagnostic.evtx') | Should Be $true
+            (Get-Content -LiteralPath (Join-Path $profileRoot 'NTUSER.dat') -Raw).Trim() | Should Be 'user hive'
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
+
+    It 'clears the read-only attribute on staged copies of read-only evidence' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $hiveRoot = Join-Path $sourceRoot 'Windows\System32\config'
+        $profileRoot = Join-Path $sourceRoot 'Users\Analyst'
+        $stagingRoot = Join-Path $tempRoot 'Staging'
+
+        New-Item -ItemType Directory -Path $hiveRoot, $profileRoot -Force | Out-Null
+        'system' | Out-File -LiteralPath (Join-Path $hiveRoot 'SYSTEM') -Encoding ASCII
+        'system log' | Out-File -LiteralPath (Join-Path $hiveRoot 'SYSTEM.LOG1') -Encoding ASCII
+        'user hive' | Out-File -LiteralPath (Join-Path $profileRoot 'NTUSER.dat') -Encoding ASCII
+
+        # A read-only mount is the recommended workflow, so staged copies must not
+        # inherit the attribute or the tool cannot replay transactions into them.
+        Get-ChildItem -LiteralPath $sourceRoot -File -Recurse -Force | ForEach-Object { $_.IsReadOnly = $true }
+
+        try {
+            $result = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $sourceRoot -StagingDirectory $stagingRoot
+
+            $result.Status | Should Be 'Staged'
+            (Get-Item -LiteralPath (Join-Path $stagingRoot 'Windows\System32\config\SYSTEM') -Force).IsReadOnly | Should Be $false
+            (Get-Item -LiteralPath (Join-Path $stagingRoot 'Windows\System32\config\SYSTEM.LOG1') -Force).IsReadOnly | Should Be $false
+            (Get-Item -LiteralPath (Join-Path $stagingRoot 'Users\Analyst\NTUSER.dat') -Force).IsReadOnly | Should Be $false
+            (Get-Item -LiteralPath (Join-Path $hiveRoot 'SYSTEM') -Force).IsReadOnly | Should Be $true
+        }
+        finally {
+            Get-ChildItem -LiteralPath $tempRoot -File -Recurse -Force | ForEach-Object { $_.IsReadOnly = $false }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+    It 'builds separate ParseUSBs registry and volume argument lists from staged evidence' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $stageRoot = Join-Path $tempRoot 'Staging'
+        $configRoot = Join-Path $stageRoot 'Windows\System32\config'
+        $userRoot = Join-Path $stageRoot 'Users\Analyst'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        New-Item -ItemType Directory -Path $configRoot, $userRoot -Force | Out-Null
+        'system' | Out-File -LiteralPath (Join-Path $configRoot 'SYSTEM') -Encoding ASCII
+        'software' | Out-File -LiteralPath (Join-Path $configRoot 'SOFTWARE') -Encoding ASCII
+        'user' | Out-File -LiteralPath (Join-Path $userRoot 'NTUSER.dat') -Encoding ASCII
+        try {
+            $staging = [pscustomobject]@{ StagingDirectory = $stageRoot; SystemHivePath = (Join-Path $configRoot 'SYSTEM'); SoftwareHivePath = (Join-Path $configRoot 'SOFTWARE'); UserHives = @([pscustomobject]@{ HivePath = (Join-Path $userRoot 'NTUSER.dat'); IsDefaultProfile = $false }) }
+            $registryArguments = @(Get-IbisParseUsbArgumentList -Phase RegistryHives -Staging $staging -OutputDirectory $outputRoot)
+            $volumeArguments = @(Get-IbisParseUsbArgumentList -Phase VolumeEnrichment -Staging $staging -OutputDirectory $outputRoot)
+
+            ($registryArguments -join ' ') | Should Match '(^| )-s( |$)'
+            ($registryArguments -join ' ') | Should Match '(^| )-w( |$)'
+            ($registryArguments -join ' ') | Should Match '(^| )-u( |$)'
+            ($registryArguments -join ' ') | Should Not Match '(^| )-v( |$)'
+            $volumeArguments[0] | Should Be '-v'
+            ($volumeArguments -join ' ') | Should Not Match '(^| )-u( |$)'
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
+
+    It 'keeps ParseUSBs phase outputs distinct and hostname-prefixed' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $stagingRoot = Join-Path $tempRoot 'Staging'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
+        'header,value' | Out-File -LiteralPath (Join-Path $stagingRoot 'usb-info.csv') -Encoding ASCII
+        try {
+            $moved = @(Move-IbisParseUsbOutput -StagingDirectory $stagingRoot -OutputDirectory $outputRoot -Hostname 'TESTHOST' -Phase RegistryHives)
+
+            $moved.Count | Should Be 1
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST-ParseUSBs-RegistryHives-usb-info.csv') | Should Be $true
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
     }
 
     It 'caches prepared hive metadata and reuses it on repeated preparation' {
@@ -2248,6 +2380,11 @@ Describe 'Ibis remaining artefact modules' {
         Get-IbisBrowserHistoryUsersPath -SourceRoot 'E:\Evidence' | Should Be 'E:\Evidence\Users'
     }
 
+    It 'groups browser-history tool output beneath WebHistory' {
+        Get-IbisWebHistoryToolOutputDirectory -OutputRoot 'D:\Output' -Hostname 'TESTHOST' -ToolFolder 'BrowsingHistoryView' | Should Be 'D:\Output\TESTHOST\WebHistory\BrowsingHistoryView'
+        Get-IbisWebHistoryToolOutputDirectory -OutputRoot 'D:\Output' -Hostname '' -ToolFolder 'ForensicWebHistory' | Should Be 'D:\Output\WebHistory\ForensicWebHistory'
+    }
+
     It 'renames SumECmd timestamped CSV outputs to the host naming format' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -2335,7 +2472,7 @@ Describe 'Ibis remaining artefact modules' {
             $result.ModuleId | Should Be 'browser-history'
             $result.Status | Should Be 'Failed'
             Test-Path -LiteralPath $result.JsonPath | Should Be $true
-            $result.OutputPath | Should Be (Join-Path $outputRoot 'TESTHOST\BrowsingHistoryView\TESTHOST-BrowsingHistoryView-All-Users.csv')
+            $result.OutputPath | Should Be (Join-Path $outputRoot 'TESTHOST\WebHistory\BrowsingHistoryView\TESTHOST-BrowsingHistoryView-All-Users.csv')
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
@@ -2352,7 +2489,7 @@ Describe 'Ibis remaining artefact modules' {
         try {
             $result = Invoke-IbisBrowsingHistoryView -ToolsRoot $tempRoot -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot $outputRoot -Hostname ''
 
-            $result.OutputPath | Should Be (Join-Path $outputRoot 'BrowsingHistoryView\BrowsingHistoryView-All-Users.csv')
+            $result.OutputPath | Should Be (Join-Path $outputRoot 'WebHistory\BrowsingHistoryView\BrowsingHistoryView-All-Users.csv')
             $result.OutputPath.Contains('\HOST\') | Should Be $false
         }
         finally {

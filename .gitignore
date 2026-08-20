@@ -2,6 +2,7 @@
 *.log
 *.tmp
 .env
+config.local.json
 .DS_Store
 Thumbs.db
 TestResults/

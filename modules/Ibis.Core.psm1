@@ -10,7 +10,24 @@ function Get-IbisConfig {
         throw "Ibis config was not found at: $configPath"
     }
 
-    Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    $localSettingsPath = Join-Path $ProjectRoot 'config.local.json'
+    if (Test-Path -LiteralPath $localSettingsPath -PathType Leaf) {
+        try {
+            $localSettings = Get-Content -LiteralPath $localSettingsPath -Raw | ConvertFrom-Json
+            foreach ($propertyName in @('defaultToolsRoot', 'defaultSourceRoot', 'defaultOutputRoot', 'completionBeepEnabled')) {
+                $property = $localSettings.PSObject.Properties[$propertyName]
+                if ($null -ne $property) {
+                    $config.$propertyName = $property.Value
+                }
+            }
+        }
+        catch {
+            throw "Ibis local settings could not be read at ${localSettingsPath}: $($_.Exception.Message)"
+        }
+    }
+
+    $config
 }
 
 function Save-IbisConfigPathSetting {
@@ -33,27 +50,35 @@ function Save-IbisConfigPathSetting {
         throw "Ibis config was not found at: $configPath"
     }
 
-    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-    if ($PSBoundParameters.ContainsKey('ToolsRoot')) {
-        $config.defaultToolsRoot = $ToolsRoot
-    }
-    if ($PSBoundParameters.ContainsKey('SourceRoot')) {
-        $config.defaultSourceRoot = $SourceRoot
-    }
-    if ($PSBoundParameters.ContainsKey('OutputRoot')) {
-        $config.defaultOutputRoot = $OutputRoot
-    }
-    if ($PSBoundParameters.ContainsKey('CompletionBeepEnabled')) {
-        if ($null -eq $config.PSObject.Properties['completionBeepEnabled']) {
-            $config | Add-Member -NotePropertyName 'completionBeepEnabled' -NotePropertyValue $CompletionBeepEnabled
+    $localSettingsPath = Join-Path $ProjectRoot 'config.local.json'
+    $settings = [ordered]@{}
+    if (Test-Path -LiteralPath $localSettingsPath -PathType Leaf) {
+        try {
+            $existingSettings = Get-Content -LiteralPath $localSettingsPath -Raw | ConvertFrom-Json
+            foreach ($property in $existingSettings.PSObject.Properties) {
+                $settings[$property.Name] = $property.Value
+            }
         }
-        else {
-            $config.completionBeepEnabled = $CompletionBeepEnabled
+        catch {
+            throw "Ibis local settings could not be read at ${localSettingsPath}: $($_.Exception.Message)"
         }
     }
 
-    $config | ConvertTo-Json -Depth 20 | Out-File -LiteralPath $configPath -Encoding UTF8
-    $config
+    if ($PSBoundParameters.ContainsKey('ToolsRoot')) {
+        $settings.defaultToolsRoot = $ToolsRoot
+    }
+    if ($PSBoundParameters.ContainsKey('SourceRoot')) {
+        $settings.defaultSourceRoot = $SourceRoot
+    }
+    if ($PSBoundParameters.ContainsKey('OutputRoot')) {
+        $settings.defaultOutputRoot = $OutputRoot
+    }
+    if ($PSBoundParameters.ContainsKey('CompletionBeepEnabled')) {
+        $settings.completionBeepEnabled = $CompletionBeepEnabled
+    }
+
+    [pscustomobject]$settings | ConvertTo-Json -Depth 20 | Out-File -LiteralPath $localSettingsPath -Encoding UTF8
+    Get-IbisConfig -ProjectRoot $ProjectRoot
 }
 
 function Get-IbisToolDefinition {
@@ -2181,6 +2206,30 @@ function Test-IbisRegistryHiveTransactionState {
     }
 }
 
+function Copy-IbisEvidenceFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force -ErrorAction Stop
+
+    # Evidence is normally mounted or held read-only.  Copy-Item carries the
+    # read-only attribute onto the working copy, which would stop tools such as
+    # rla and ParseUSBs from writing a replayed hive into our own cache. Clearing
+    # it on the copy keeps the source untouched and the working copy usable.
+    $copiedFile = Get-Item -LiteralPath $DestinationPath -Force
+    if ($copiedFile.IsReadOnly) {
+        $copiedFile.IsReadOnly = $false
+    }
+
+    $copiedFile
+}
+
 function Copy-IbisRegistryHiveToCache {
     [CmdletBinding()]
     param(
@@ -2197,18 +2246,123 @@ function Copy-IbisRegistryHiveToCache {
 
     $hiveName = Split-Path -Path $SourceHivePath -Leaf
     $destinationHivePath = Join-Path $CacheDirectory $hiveName
-    Copy-Item -LiteralPath $SourceHivePath -Destination $destinationHivePath -Force
+    Copy-IbisEvidenceFile -SourcePath $SourceHivePath -DestinationPath $destinationHivePath | Out-Null
 
     $sourceDirectory = Split-Path -Path $SourceHivePath -Parent
     $transactionLogs = @(Get-ChildItem -LiteralPath $sourceDirectory -Filter "$hiveName.LOG*" -File -Force -ErrorAction SilentlyContinue)
     foreach ($log in $transactionLogs) {
-        Copy-Item -LiteralPath $log.FullName -Destination (Join-Path $CacheDirectory $log.Name) -Force
+        Copy-IbisEvidenceFile -SourcePath $log.FullName -DestinationPath (Join-Path $CacheDirectory $log.Name) | Out-Null
     }
 
     [pscustomobject]@{
         HivePath = $destinationHivePath
         TransactionLogCount = $transactionLogs.Count
         TransactionLogs = @($transactionLogs | ForEach-Object { $_.Name })
+    }
+}
+
+function Copy-IbisParseUsbEvidenceToStaging {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StagingDirectory
+    )
+
+    $sourceConfigDirectory = Join-Path $SourceRoot 'Windows\System32\config'
+    $stagingConfigDirectory = Join-Path $StagingDirectory 'Windows\System32\config'
+    if (-not (Test-Path -LiteralPath $sourceConfigDirectory -PathType Container)) {
+        return [pscustomobject]@{
+            Status = 'Skipped'
+            SourceConfigDirectory = $sourceConfigDirectory
+            StagingDirectory = $StagingDirectory
+            StagingConfigDirectory = $stagingConfigDirectory
+            FileCount = 0
+            Files = @()
+            Message = 'Windows registry configuration directory was not found.'
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $stagingConfigDirectory)) {
+        New-Item -ItemType Directory -Path $stagingConfigDirectory -Force | Out-Null
+    }
+
+    # Copy all top-level configuration files so each hive retains its transaction logs
+    # and any auxiliary registry files ParseUSBs may need, while never exposing source
+    # evidence to a tool that can replay transactions in place.
+    $sourceFiles = @(Get-ChildItem -LiteralPath $sourceConfigDirectory -File -Force -ErrorAction Stop)
+    foreach ($sourceFile in $sourceFiles) {
+        Copy-IbisEvidenceFile -SourcePath $sourceFile.FullName -DestinationPath (Join-Path $stagingConfigDirectory $sourceFile.Name) | Out-Null
+    }
+
+    # ParseUSBs volume mode expects a Windows-volume layout.  Preserve only the
+    # artefacts it uses for additional USB context rather than copying whole profiles.
+    $stagedUserHives = @()
+    $stagedLnkFiles = @()
+    $profiles = @(Get-IbisUserProfile -SourceRoot $SourceRoot)
+    foreach ($profile in $profiles) {
+        $stagedProfileDirectory = Join-Path (Join-Path $StagingDirectory 'Users') $profile.UserName
+        if (Test-Path -LiteralPath $profile.NtUserPath -PathType Leaf) {
+            $cachedHive = Copy-IbisRegistryHiveToCache -SourceHivePath $profile.NtUserPath -CacheDirectory $stagedProfileDirectory
+            $stagedUserHives += [pscustomobject]@{
+                UserName = $profile.UserName
+                SourceHivePath = $profile.NtUserPath
+                HivePath = $cachedHive.HivePath
+                TransactionLogCount = $cachedHive.TransactionLogCount
+                TransactionLogs = $cachedHive.TransactionLogs
+                IsDefaultProfile = ($profile.UserName -like 'Default*')
+            }
+        }
+
+        # LNK files can exist outside Recent.  Copy the LNK files only, retaining
+        # their relative locations so ParseUSBs can report the original profile path.
+        $sourceLnkFiles = @(Get-ChildItem -LiteralPath $profile.ProfilePath -Filter '*.lnk' -File -Recurse -Force -ErrorAction SilentlyContinue)
+        foreach ($sourceLnkFile in $sourceLnkFiles) {
+            $relativePath = $sourceLnkFile.FullName.Substring($profile.ProfilePath.Length).TrimStart('\', '/')
+            $destinationLnkPath = Join-Path $stagedProfileDirectory $relativePath
+            $destinationLnkDirectory = Split-Path -Path $destinationLnkPath -Parent
+            if (-not (Test-Path -LiteralPath $destinationLnkDirectory)) {
+                New-Item -ItemType Directory -Path $destinationLnkDirectory -Force | Out-Null
+            }
+            Copy-IbisEvidenceFile -SourcePath $sourceLnkFile.FullName -DestinationPath $destinationLnkPath | Out-Null
+            $stagedLnkFiles += [pscustomobject]@{ UserName = $profile.UserName; SourcePath = $sourceLnkFile.FullName; StagingPath = $destinationLnkPath }
+        }
+    }
+
+    $stagedEventLogs = @()
+    $eventLogDirectory = Join-Path $SourceRoot 'Windows\System32\winevt\Logs'
+    $stagingEventLogDirectory = Join-Path $StagingDirectory 'Windows\System32\winevt\Logs'
+    $usbEventLogNames = @('Microsoft-Windows-Partition%4Diagnostic.evtx', 'Microsoft-Windows-Storsvc%4Diagnostic.evtx')
+    foreach ($eventLogName in $usbEventLogNames) {
+        $sourceEventLogPath = Join-Path $eventLogDirectory $eventLogName
+        if (Test-Path -LiteralPath $sourceEventLogPath -PathType Leaf) {
+            if (-not (Test-Path -LiteralPath $stagingEventLogDirectory)) {
+                New-Item -ItemType Directory -Path $stagingEventLogDirectory -Force | Out-Null
+            }
+            $stagingEventLogPath = Join-Path $stagingEventLogDirectory $eventLogName
+            Copy-IbisEvidenceFile -SourcePath $sourceEventLogPath -DestinationPath $stagingEventLogPath | Out-Null
+            $stagedEventLogs += [pscustomobject]@{ Name = $eventLogName; SourcePath = $sourceEventLogPath; StagingPath = $stagingEventLogPath }
+        }
+    }
+
+    [pscustomobject]@{
+        Status = 'Staged'
+        SourceConfigDirectory = $sourceConfigDirectory
+        StagingDirectory = $StagingDirectory
+        StagingConfigDirectory = $stagingConfigDirectory
+        FileCount = $sourceFiles.Count
+        Files = @($sourceFiles | ForEach-Object { $_.Name })
+        SystemHivePath = Join-Path $stagingConfigDirectory 'SYSTEM'
+        SoftwareHivePath = Join-Path $stagingConfigDirectory 'SOFTWARE'
+        UserHives = $stagedUserHives
+        UserHiveCount = $stagedUserHives.Count
+        LnkFiles = $stagedLnkFiles
+        LnkFileCount = $stagedLnkFiles.Count
+        EventLogs = $stagedEventLogs
+        EventLogCount = $stagedEventLogs.Count
+        Message = 'Copied ParseUSBs registry, user-hive, LNK, and supported event-log evidence to the staging area.'
     }
 }
 
@@ -5980,6 +6134,25 @@ function Get-IbisBrowserHistoryUsersPath {
     [System.IO.Path]::Combine($SourceRoot, 'Users')
 }
 
+function Get-IbisWebHistoryToolOutputDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Hostname,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ToolFolder
+    )
+
+    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+    $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
+    Join-Path (Join-Path $hostOutputRoot 'WebHistory') $ToolFolder
+}
+
 function Invoke-IbisBrowsingHistoryView {
     [CmdletBinding()]
     param(
@@ -6002,7 +6175,7 @@ function Invoke-IbisBrowsingHistoryView {
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $sourceDirectory = Get-IbisBrowserHistoryUsersPath -SourceRoot $SourceRoot
-    $outputDirectory = Join-Path $hostOutputRoot 'BrowsingHistoryView'
+    $outputDirectory = Get-IbisWebHistoryToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'BrowsingHistoryView'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $outputPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'BrowsingHistoryView-All-Users.csv')
 
@@ -6124,7 +6297,7 @@ function Invoke-IbisForensicWebHistory {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    $outputDirectory = Join-Path $hostOutputRoot 'ForensicWebHistory'
+    $outputDirectory = Get-IbisWebHistoryToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'ForensicWebHistory'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $stagingDirectory = Join-Path $workingsDirectory 'ForensicWebHistory-Staging'
 
@@ -6181,6 +6354,56 @@ function Invoke-IbisForensicWebHistory {
     [pscustomobject]@{ ModuleId = 'forensic-webhistory'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
 }
 
+function Get-IbisParseUsbArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('RegistryHives', 'VolumeEnrichment')]
+        [string]$Phase,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Staging,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory
+    )
+
+    if ($Phase -eq 'VolumeEnrichment') {
+        return @('-v', $Staging.StagingDirectory.TrimEnd('\', '/'), '-o', 'csv', '-d', $OutputDirectory)
+    }
+
+    if (-not (Test-Path -LiteralPath $Staging.SystemHivePath -PathType Leaf)) { throw 'The staged SYSTEM hive was not found.' }
+    if (-not (Test-Path -LiteralPath $Staging.SoftwareHivePath -PathType Leaf)) { throw 'The staged SOFTWARE hive was not found.' }
+
+    $arguments = @('-s', $Staging.SystemHivePath, '-w', $Staging.SoftwareHivePath)
+    foreach ($userHive in @($Staging.UserHives | Where-Object { -not $_.IsDefaultProfile })) {
+        if (Test-Path -LiteralPath $userHive.HivePath -PathType Leaf) { $arguments += @('-u', $userHive.HivePath) }
+    }
+    $arguments += @('-o', 'csv', '-d', $OutputDirectory)
+    $arguments
+}
+
+function Move-IbisParseUsbOutput {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [string]$StagingDirectory,
+        [Parameter(Mandatory = $true)] [string]$OutputDirectory,
+        [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$Hostname,
+        [Parameter(Mandatory = $true)] [ValidateSet('RegistryHives', 'VolumeEnrichment')] [string]$Phase
+    )
+
+    if (-not (Test-Path -LiteralPath $StagingDirectory -PathType Container)) { return @() }
+    if (-not (Test-Path -LiteralPath $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
+    $moved = @()
+    foreach ($file in @(Get-ChildItem -LiteralPath $StagingDirectory -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+        $newName = New-IbisHostPrefixedFileName -Hostname $Hostname -Suffix ("ParseUSBs-{0}-{1}" -f $Phase, $file.Name)
+        $destinationPath = Join-Path $OutputDirectory $newName
+        Move-Item -LiteralPath $file.FullName -Destination $destinationPath -Force
+        $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $destinationPath; Phase = $Phase }
+    }
+    $moved
+}
+
 function Invoke-IbisParseUsbArtifacts {
     [CmdletBinding()]
     param(
@@ -6204,7 +6427,10 @@ function Invoke-IbisParseUsbArtifacts {
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
     $outputDirectory = Join-Path $hostOutputRoot 'USB'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
-    $logPath = Join-Path $outputDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'ParseUSBs-Log.txt')
+    $stagingDirectory = Join-Path $workingsDirectory 'ParseUSBs-Evidence-Staging'
+    $stagingBackupRoot = Join-Path $workingsDirectory 'ParseUSBs-Evidence-Staging-Backups'
+    $stagingResult = $null
+    $stagingBackupPath = $null
 
     if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
         return [pscustomobject]@{ ModuleId = 'usb'; Status = 'Skipped'; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $null; Message = 'Evidence source root was not found.' }
@@ -6215,45 +6441,56 @@ function Invoke-IbisParseUsbArtifacts {
 
     $tool = Get-IbisToolDefinitionById -ToolDefinitions $ToolDefinitions -Id 'parseusbs'
     if ($null -eq $tool) {
-        $toolResult = [pscustomobject]@{ ToolId = 'parseusbs'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; LogPath = $logPath; Status = 'Failed'; ExitCode = $null; Message = 'parseusbs is not configured.' }
+        $toolResults = @([pscustomobject]@{ ToolId = 'parseusbs'; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = 'parseusbs is not configured.' })
     }
     else {
         $toolPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $tool
         if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
-            $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; LogPath = $logPath; Status = 'Failed'; ExitCode = $null; Message = "parseusbs is missing at: $toolPath" }
+            $toolResults = @([pscustomobject]@{ ToolId = $tool.id; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = "parseusbs is missing at: $toolPath" })
         }
         else {
-            $sourceRootForTool = $SourceRoot.TrimEnd('\', '/')
-            $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList @('-v', $sourceRootForTool, '-o', 'csv', '-d', $outputDirectory) -WorkingDirectory (Split-Path -Path $toolPath -Parent)
-            $processResult.StandardOutput | Out-File -LiteralPath $logPath -Encoding UTF8
-            if ($processResult.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($processResult.StandardError)) {
-                $processResult.StandardError | Out-File -LiteralPath (Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'ParseUSBs.stderr.txt')) -Encoding UTF8
-            }
+            try {
+                $stagingBackupPath = Move-IbisExistingDirectoryToBackup -DirectoryPath $stagingDirectory -BackupRoot $stagingBackupRoot
+                $stagingResult = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $SourceRoot -StagingDirectory $stagingDirectory
+                if ($stagingResult.Status -ne 'Staged') {
+                    throw $stagingResult.Message
+                }
 
-            $csvFiles = @(Get-ChildItem -LiteralPath $outputDirectory -Filter '*.csv' -File -Force -ErrorAction SilentlyContinue)
-            $status = 'Completed'
-            $message = 'parseusbs completed.'
-            if ($processResult.ExitCode -ne 0) {
-                $status = 'Failed'
-                $message = "parseusbs exited with code $($processResult.ExitCode)."
+                $toolResults = @()
+                foreach ($phase in @('RegistryHives', 'VolumeEnrichment')) {
+                    $phaseOutputDirectory = Join-Path $workingsDirectory ("ParseUSBs-{0}-Output" -f $phase)
+                    $phaseOutputBackupPath = Move-IbisExistingDirectoryToBackup -DirectoryPath $phaseOutputDirectory -BackupRoot (Join-Path $workingsDirectory 'ParseUSBs-Output-Backups')
+                    if (-not (Test-Path -LiteralPath $phaseOutputDirectory)) { New-Item -ItemType Directory -Path $phaseOutputDirectory -Force | Out-Null }
+                    $arguments = Get-IbisParseUsbArgumentList -Phase $phase -Staging $stagingResult -OutputDirectory $phaseOutputDirectory
+                    $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList $arguments -WorkingDirectory (Split-Path -Path $toolPath -Parent)
+                    $phaseLogPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ("ParseUSBs-{0}-Log.txt" -f $phase))
+                    $phaseErrorPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ("ParseUSBs-{0}.stderr.txt" -f $phase))
+                    $processResult.StandardOutput | Out-File -LiteralPath $phaseLogPath -Encoding UTF8
+                    if ($processResult.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($processResult.StandardError)) { $processResult.StandardError | Out-File -LiteralPath $phaseErrorPath -Encoding UTF8 }
+                    $movedOutputs = @(Move-IbisParseUsbOutput -StagingDirectory $phaseOutputDirectory -OutputDirectory $outputDirectory -Hostname $safeHost -Phase $phase)
+                    $phaseStatus = 'Completed'
+                    $phaseMessage = "parseusbs $phase completed against staged evidence."
+                    if ($processResult.ExitCode -ne 0) { $phaseStatus = 'Failed'; $phaseMessage = "parseusbs $phase exited with code $($processResult.ExitCode)." }
+                    elseif ($movedOutputs.Count -eq 0) { $phaseStatus = 'Completed With Warnings'; $phaseMessage = "parseusbs $phase completed, but no output files were found." }
+                    $toolResults += [pscustomobject]@{ ToolId = $tool.id; Phase = $phase; SourceRoot = $stagingDirectory; OriginalSourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagedOutputDirectory = $phaseOutputDirectory; StagedOutputBackupPath = $phaseOutputBackupPath; LogPath = $phaseLogPath; StandardErrorPath = $phaseErrorPath; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = $phaseStatus; ExitCode = $processResult.ExitCode; CommandLine = $processResult.CommandLine; MovedOutputs = $movedOutputs; Message = $phaseMessage }
+                }
             }
-            elseif ($csvFiles.Count -eq 0) {
-                $status = 'Completed With Warnings'
-                $message = 'parseusbs completed, but no CSV output files were found.'
+            catch {
+                $toolResults = @([pscustomobject]@{ ToolId = $tool.id; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = 'Failed'; ExitCode = $null; Message = "ParseUSBs evidence staging failed: $($_.Exception.Message)" })
             }
-
-            $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $sourceRootForTool; OutputDirectory = $outputDirectory; LogPath = $logPath; Status = $status; ExitCode = $processResult.ExitCode; CommandLine = $processResult.CommandLine; Message = $message }
         }
     }
 
     $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'USB.json')
-    $payload = [pscustomobject]@{ ModuleId = 'usb'; Created = (Get-Date).ToString('s'); SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; WorkingsDirectory = $workingsDirectory; ToolResults = @($toolResult) }
+    $payload = [pscustomobject]@{ ModuleId = 'usb'; Created = (Get-Date).ToString('s'); SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; WorkingsDirectory = $workingsDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Staging = $stagingResult; ToolResults = @($toolResults) }
     $payload | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $summaryPath -Encoding UTF8
 
     $status = 'Completed'
     $message = 'USB artefact processing completed.'
-    if ($toolResult.Status -eq 'Failed') { $status = 'Failed'; $message = 'parseusbs failed. See USB summary JSON for details.' }
-    elseif ($toolResult.Status -match 'Warnings') { $status = 'Completed With Warnings'; $message = 'USB artefact processing completed with warning(s). See summary JSON for details.' }
+    $registryResult = @($toolResults | Where-Object { $_.Phase -eq 'RegistryHives' }) | Select-Object -First 1
+    $volumeResult = @($toolResults | Where-Object { $_.Phase -eq 'VolumeEnrichment' }) | Select-Object -First 1
+    if ($null -eq $registryResult -or $registryResult.Status -eq 'Failed') { $status = 'Failed'; $message = 'parseusbs registry-hive processing failed. See USB summary JSON for details.' }
+    elseif (($null -ne $volumeResult -and $volumeResult.Status -eq 'Failed') -or ($toolResults | Where-Object { $_.Status -match 'Warnings' }).Count -gt 0) { $status = 'Completed With Warnings'; $message = 'USB artefact processing completed with warning(s). See summary JSON for details.' }
 
     [pscustomobject]@{ ModuleId = 'usb'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
 }
@@ -6734,7 +6971,9 @@ Export-ModuleMember -Function Get-IbisHostOutputRoot
 Export-ModuleMember -Function Get-IbisSystemHivePath
 Export-ModuleMember -Function Get-IbisWindowsRegistryHiveName
 Export-ModuleMember -Function Test-IbisRegistryHiveTransactionState
+Export-ModuleMember -Function Copy-IbisEvidenceFile
 Export-ModuleMember -Function Copy-IbisRegistryHiveToCache
+Export-ModuleMember -Function Copy-IbisParseUsbEvidenceToStaging
 Export-ModuleMember -Function Invoke-IbisRegistryHiveTransactionReplay
 Export-ModuleMember -Function Get-IbisCachedRegistryHivePreparation
 Export-ModuleMember -Function Invoke-IbisPrepareRegistryHiveFile
@@ -6785,9 +7024,12 @@ Export-ModuleMember -Function Get-IbisUserAccessLogPath
 Export-ModuleMember -Function Rename-IbisSumECmdOutput
 Export-ModuleMember -Function Invoke-IbisUserAccessLogsSum
 Export-ModuleMember -Function Get-IbisBrowserHistoryUsersPath
+Export-ModuleMember -Function Get-IbisWebHistoryToolOutputDirectory
 Export-ModuleMember -Function Invoke-IbisBrowsingHistoryView
 Export-ModuleMember -Function Move-IbisForensicWebHistoryOutput
 Export-ModuleMember -Function Invoke-IbisForensicWebHistory
+Export-ModuleMember -Function Get-IbisParseUsbArgumentList
+Export-ModuleMember -Function Move-IbisParseUsbOutput
 Export-ModuleMember -Function Invoke-IbisParseUsbArtifacts
 Export-ModuleMember -Function Get-IbisRegexValue
 Export-ModuleMember -Function ConvertFrom-IbisSystemSummaryRegRipperOutput
