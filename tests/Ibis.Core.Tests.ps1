@@ -892,6 +892,32 @@ Describe 'Ibis setup step indicators' {
     }
 }
 
+Describe 'Ibis About tab support link' {
+    $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
+
+    It 'holds the support address in one place' {
+        ([regex]::Matches($guiText, 'buymeacoffee\.com/bloggz')).Count | Should Be 1
+        $guiText | Should Match "\`$supportUrl = 'https://buymeacoffee\.com/bloggz'"
+    }
+
+    It 'shows the link on the About tab' {
+        $guiText | Should Match '\$aboutTab\.Controls\.Add\(\$supportLinkLabel\)'
+    }
+
+    It 'opens the address from the link rather than a hard-coded copy' {
+        $guiText | Should Match '\$supportLinkLabel\.Tag = \$supportUrl'
+        $guiText | Should Match '\$supportLinkLabel\.Add_LinkClicked'
+    }
+
+    It 'keeps the link clear of the changelog label' {
+        $linkTop = [int][regex]::Match($guiText, '\$supportLinkLabel\.Location = New-Object System\.Drawing\.Point\(\d+, (\d+)\)').Groups[1].Value
+        $linkHeight = [int][regex]::Match($guiText, '\$supportLinkLabel\.Size = New-Object System\.Drawing\.Size\(\d+, (\d+)\)').Groups[1].Value
+        $changelogTop = [int][regex]::Match($guiText, '\$changelogLabel\.Location = New-Object System\.Drawing\.Point\(\d+, (\d+)\)').Groups[1].Value
+
+        ($linkTop + $linkHeight) | Should BeLessThan $changelogTop
+    }
+}
+
 Describe 'Ibis setup tab layout' {
     $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
 

@@ -4,6 +4,11 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## Unreleased
+
+- Added a Buy Me a Coffee sponsor link. It appears as the GitHub Sponsor button through `.github/FUNDING.yml`, as a `Support` section in the README, and as a link on the `About` tab. Supporting Ibis is optional and buys no priority, no support obligation, and no influence over what Ibis does.
+- Repaired the manual verification command in the README, where a tab character sat in place of the backslash in `.\tests\manual`, so the command as printed could not run.
+
 ## v0.7.4 - 2026-08-20
 
 - A processing module that throws now writes a failure summary to `_Ibis-Failures\HOSTNAME-<module>-Failure.json` under the output root, recording the error message, exception type, script stack trace, and the source, tools, and output paths used. Previously a throwing module left nothing on disk, so the output folder gave no sign it had ever run. The run log names the file.

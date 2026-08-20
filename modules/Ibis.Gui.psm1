@@ -1542,6 +1542,7 @@ function Show-IbisGui {
         $appVersion = [string]$config.version
     }
     $changelogPath = Join-Path $ProjectRoot 'CHANGELOG.md'
+    $supportUrl = 'https://buymeacoffee.com/bloggz'
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Ibis v${appVersion}: Tool Runner"
@@ -1633,13 +1634,22 @@ function Show-IbisGui {
 
     $aboutSummaryTextBox = New-Object System.Windows.Forms.TextBox
     $aboutSummaryTextBox.Location = New-Object System.Drawing.Point(18, 66)
-    $aboutSummaryTextBox.Size = New-Object System.Drawing.Size(744, 88)
+    $aboutSummaryTextBox.Size = New-Object System.Drawing.Size(744, 74)
     $aboutSummaryTextBox.Multiline = $true
     $aboutSummaryTextBox.ReadOnly = $true
     $aboutSummaryTextBox.BorderStyle = 'FixedSingle'
     $aboutSummaryTextBox.BackColor = [System.Drawing.SystemColors]::Window
     $aboutSummaryTextBox.Text = "Ibis is currently pre-1.0 beta software. Version numbers are tracked in config.json and release notes are recorded in CHANGELOG.md.`r`n`r`nCurrent version: v$appVersion"
     $aboutTab.Controls.Add($aboutSummaryTextBox)
+
+    $supportLinkLabel = New-Object System.Windows.Forms.LinkLabel
+    $supportLinkLabel.Text = 'Ibis is free and Apache-2.0 licensed. If it saves you time on a case, you can buy me a coffee.'
+    $supportLinkLabel.Location = New-Object System.Drawing.Point(18, 146)
+    $supportLinkLabel.Size = New-Object System.Drawing.Size(744, 20)
+    # Link only the closing phrase so the line still reads as a sentence.
+    $supportLinkLabel.LinkArea = New-Object System.Windows.Forms.LinkArea(($supportLinkLabel.Text.IndexOf('buy me a coffee')), 15)
+    $supportLinkLabel.Tag = $supportUrl
+    $aboutTab.Controls.Add($supportLinkLabel)
 
     $changelogLabel = New-Object System.Windows.Forms.Label
     $changelogLabel.Text = 'Changelog'
@@ -2640,6 +2650,20 @@ function Show-IbisGui {
             Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text $message -StripAnsi
             Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message $message
             $statusLabel.Text = 'Long path update failed'
+        }
+    })
+
+    $supportLinkLabel.Add_LinkClicked({
+        param($eventSender, $eventArgs)
+
+        $url = [string]$eventSender.Tag
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Opening support page: $url"
+        try {
+            Start-Process -FilePath $url
+        }
+        catch {
+            # A missing default browser must not take the window down.
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Level 'ERROR' -Message "Could not open the support page: $($_.Exception.Message)"
         }
     })
 

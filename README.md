@@ -101,7 +101,7 @@ Each setup step carries a status symbol in its title: a green tick when it is re
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
-- `About`: current version and changelog.
+- `About`: current version, changelog, and the support link.
 
 The GUI keeps tool downloads, Hayabusa rule updates, and processing runs in background runspaces so the form remains responsive. Processing progress is reported through status text, progress bar updates, and a scrolling run log.
 
@@ -352,7 +352,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.4`, both test runs pass with `195` tests.
+As of `v0.7.4`, both test runs pass with `199` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 
