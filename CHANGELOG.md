@@ -4,7 +4,13 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
-## Unreleased
+## v0.7.5 - 2026-08-20
+
+- Added Boobook as a processing module. It parses USB artefacts into a self-contained analyst report, plus CSV and JSONL of every device, event, and correlation. Ibis runs it with `-in-place` so the results land in `USB\Boobook` rather than a run directory Ibis did not name, and moves any earlier result into `USB\_Boobook-Output-Backups` first, because Boobook refuses to write into a folder that already holds anything.
+- ParseUSBs output moved from `USB\` into `USB\ParseUSBs\`, so the two USB tools sit beside each other the way the event log and browser history tools already do. Existing output folders are not migrated; a re-run writes to the new location.
+- The `Run tools` module list is now grouped by the artefact each module reads: system and registry, Windows Event Logs, browser history, USB artefacts. Groups come from a new `group` field in `config.json`, which decides both the reading order and the run order. The columns are chosen to keep every module on screen without scrolling, which gave the run log a taller box.
+- Module names lost the words the group heading now carries, so `Windows Event Logs (EvtxECmd)` is `EvtxECmd` and `Browser history (BrowsingHistoryView)` is `BrowsingHistoryView`. The run log uses these names.
+- The run no longer filters modules against a hand-written list of ids, which silently dropped any module nobody remembered to add to it. It filters on the `implemented` status already recorded in `config.json`, and a test asserts every implemented module has a dispatch case.
 
 - Added a Buy Me a Coffee sponsor link. It appears as the GitHub Sponsor button through `.github/FUNDING.yml`, as a `Support` section in the README, and as a link on the `About` tab. Supporting Ibis is optional and buys no priority, no support obligation, and no influence over what Ibis does.
 - Repaired the manual verification command in the README, where a tab character sat in place of the backslash in `.\tests\manual`, so the command as printed could not run.

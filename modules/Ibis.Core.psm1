@@ -317,6 +317,92 @@ function Get-IbisToolDefinitionById {
     $ToolDefinitions | Where-Object { $_.id -eq $Id } | Select-Object -First 1
 }
 
+function Get-IbisModuleGroupName {
+    [CmdletBinding()]
+    param(
+        $Module,
+
+        [string]$DefaultValue = 'Other'
+    )
+
+    if ($null -eq $Module) { return $DefaultValue }
+    $groupName = [string]$Module.group
+    if ([string]::IsNullOrWhiteSpace($groupName)) { return $DefaultValue }
+    $groupName.Trim()
+}
+
+function Split-IbisModuleBlockColumn {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [int[]]$BlockRows,
+
+        [int]$ColumnCount = 3
+    )
+
+    $blockCount = $BlockRows.Count
+    if ($blockCount -eq 0) { return @() }
+    if ($ColumnCount -lt 1) { $ColumnCount = 1 }
+    if ($ColumnCount -gt $blockCount) { $ColumnCount = $blockCount }
+
+    # Blocks keep their order and each column takes a run of them, so the
+    # only choice is where the columns break. There are few enough groups to
+    # try every set of breaks and keep the best.
+    #
+    # Best means the shortest tallest column, so nothing falls below the
+    # fold. Ties are settled on the most even spread, because two answers
+    # can be equally tall while one leaves a column nearly empty.
+    $breakPositions = New-Object "int[]" ($ColumnCount - 1)
+    for ($index = 0; $index -lt $breakPositions.Count; $index++) { $breakPositions[$index] = $index }
+
+    $bestAssignment = $null
+    $bestTallest = [int]::MaxValue
+    $bestSpread = [long]::MaxValue
+
+    while ($true) {
+        $assignment = New-Object "int[]" $blockCount
+        $column = 0
+        for ($index = 0; $index -lt $blockCount; $index++) {
+            if ($column -lt $breakPositions.Count -and $index -gt $breakPositions[$column]) { $column++ }
+            $assignment[$index] = $column
+        }
+
+        $tallest = 0
+        $spread = [long]0
+        for ($column = 0; $column -lt $ColumnCount; $column++) {
+            $rows = 0
+            for ($index = 0; $index -lt $blockCount; $index++) {
+                if ($assignment[$index] -ne $column) { continue }
+                # One blank row separates two groups sharing a column.
+                if ($rows -gt 0) { $rows++ }
+                $rows += $BlockRows[$index]
+            }
+            if ($rows -gt $tallest) { $tallest = $rows }
+            $spread += ([long]$rows * $rows)
+        }
+
+        if ($tallest -lt $bestTallest -or ($tallest -eq $bestTallest -and $spread -lt $bestSpread)) {
+            $bestTallest = $tallest
+            $bestSpread = $spread
+            $bestAssignment = $assignment
+        }
+
+        if ($breakPositions.Count -eq 0) { break }
+
+        # Step to the next set of break positions, in order.
+        $moved = $breakPositions.Count - 1
+        while ($moved -ge 0 -and $breakPositions[$moved] -eq ($blockCount - $breakPositions.Count + $moved - 1)) { $moved-- }
+        if ($moved -lt 0) { break }
+        $breakPositions[$moved]++
+        for ($index = $moved + 1; $index -lt $breakPositions.Count; $index++) {
+            $breakPositions[$index] = $breakPositions[$index - 1] + 1
+        }
+    }
+
+    $bestAssignment
+}
+
 function Resolve-IbisToolDownloadUrl {
     [CmdletBinding()]
     param(
@@ -6880,6 +6966,25 @@ function Invoke-IbisForensicWebHistory {
     [pscustomobject]@{ ModuleId = 'forensic-webhistory'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
 }
 
+function Get-IbisUsbToolOutputDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Hostname,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ToolFolder
+    )
+
+    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+    $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
+    Join-Path (Join-Path $hostOutputRoot 'USB') $ToolFolder
+}
+
 function Get-IbisParseUsbArgumentList {
     [CmdletBinding()]
     param(
@@ -6945,7 +7050,7 @@ function Invoke-IbisParseUsbArtifacts {
 
     $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
     $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
-    $outputDirectory = Join-Path $hostOutputRoot 'USB'
+    $outputDirectory = Get-IbisUsbToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'ParseUSBs'
     $workingsDirectory = Join-Path $outputDirectory '_Working'
     $stagingDirectory = Join-Path $workingsDirectory 'ParseUSBs-Evidence-Staging'
     $stagingBackupRoot = Join-Path $workingsDirectory 'ParseUSBs-Evidence-Staging-Backups'
@@ -7032,6 +7137,146 @@ function Invoke-IbisParseUsbArtifacts {
     }
 
     [pscustomobject]@{ ModuleId = 'usb'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
+}
+
+function Get-IbisBoobookArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory,
+
+        [AllowEmptyString()]
+        [string]$Hostname = '',
+
+        [ValidateSet('general', 'exfiltration', 'printing', 'network-bypass', 'identity', 'ot')]
+        [string]$CaseProfile = 'general'
+    )
+
+    # -in-place puts the results straight into the folder Ibis has already
+    # chosen, rather than a timestamped run directory beneath it. Ibis names
+    # every output folder itself, and a run directory it did not name would
+    # hide the results from the rest of the output layout.
+    $arguments = @('-evidence', $SourceRoot, '-output', $OutputDirectory, '-in-place')
+    if (-not [string]::IsNullOrWhiteSpace($Hostname)) {
+        $arguments += @('-host', $Hostname)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CaseProfile)) {
+        $arguments += @('-profile', $CaseProfile)
+    }
+
+    # Boobook narrates progress on stderr. Ibis redirects the console, so the
+    # narration would only ever land in the stderr capture and be read as
+    # though every run had complained about something.
+    $arguments += '-quiet'
+    $arguments
+}
+
+function Invoke-IbisBoobookUsbArtifacts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ToolsRoot,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$ToolDefinitions,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot,
+
+        [string]$Hostname = 'HOST'
+    )
+
+    $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+    $hostOutputRoot = Get-IbisHostOutputRoot -OutputRoot $OutputRoot -Hostname $safeHost
+    $outputDirectory = Get-IbisUsbToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Boobook'
+    $workingsDirectory = Join-Path $outputDirectory '_Working'
+    $outputBackupPath = $null
+
+    if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+        return [pscustomobject]@{ ModuleId = 'boobook'; Status = 'Skipped'; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $null; Message = 'Evidence source root was not found.' }
+    }
+
+    $tool = Get-IbisToolDefinitionById -ToolDefinitions $ToolDefinitions -Id 'boobook'
+    if ($null -eq $tool) {
+        $toolResult = [pscustomobject]@{ ToolId = 'boobook'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = 'boobook is not configured.' }
+    }
+    else {
+        $toolPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $tool
+        if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = "boobook is missing at: $toolPath" }
+        }
+        else {
+            try {
+                # Boobook refuses -in-place into a folder that already holds
+                # anything, so that one run can never write over another run's
+                # results. Ibis keeps the earlier run instead of deleting it.
+                $outputBackupPath = Move-IbisExistingDirectoryToBackup -DirectoryPath $outputDirectory -BackupRoot (Join-Path (Split-Path -Path $outputDirectory -Parent) '_Boobook-Output-Backups')
+                if (-not (Test-Path -LiteralPath $outputDirectory)) { New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null }
+
+                $arguments = Get-IbisBoobookArgumentList -SourceRoot $SourceRoot -OutputDirectory $outputDirectory -Hostname $safeHost
+                $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList $arguments -WorkingDirectory (Split-Path -Path $toolPath -Parent)
+
+                # The working folder is made after the run, not before it: an
+                # empty folder is still a folder, and -in-place counts entries.
+                if (-not (Test-Path -LiteralPath $workingsDirectory)) { New-Item -ItemType Directory -Path $workingsDirectory -Force | Out-Null }
+                $logPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Boobook-Log.txt')
+                $errorPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Boobook.stderr.txt')
+                $processResult.StandardOutput | Out-File -LiteralPath $logPath -Encoding UTF8
+                if ($processResult.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($processResult.StandardError)) { $processResult.StandardError | Out-File -LiteralPath $errorPath -Encoding UTF8 }
+
+                $reportPath = Join-Path $outputDirectory 'report.html'
+                $manifestPath = Join-Path $outputDirectory 'manifest.json'
+                $dataDirectory = Join-Path $outputDirectory 'data'
+                $dataFileCount = 0
+                if (Test-Path -LiteralPath $dataDirectory -PathType Container) {
+                    $dataFileCount = @(Get-ChildItem -LiteralPath $dataDirectory -File -ErrorAction SilentlyContinue).Count
+                }
+
+                $toolStatus = 'Completed'
+                $toolMessage = 'boobook completed.'
+                if ($processResult.ExitCode -ne 0) {
+                    $toolStatus = 'Failed'
+                    $excerpt = Get-IbisToolErrorExcerpt -StandardError $processResult.StandardError
+                    $toolMessage = "boobook exited with code $($processResult.ExitCode)."
+                    if (-not [string]::IsNullOrWhiteSpace($excerpt)) { $toolMessage = "$toolMessage $excerpt" }
+                }
+                elseif (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                    $toolStatus = 'Completed With Warnings'
+                    $toolMessage = 'boobook reported success but wrote no manifest.'
+                }
+
+                $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; OutputBackupPath = $outputBackupPath; ReportPath = $reportPath; ManifestPath = $manifestPath; DataDirectory = $dataDirectory; DataFileCount = $dataFileCount; LogPath = $logPath; StandardErrorPath = $errorPath; Status = $toolStatus; ExitCode = $processResult.ExitCode; CommandLine = $processResult.CommandLine; Message = $toolMessage }
+            }
+            catch {
+                $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; OutputBackupPath = $outputBackupPath; Status = 'Failed'; ExitCode = $null; Message = "boobook processing failed: $($_.Exception.Message)" }
+            }
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $workingsDirectory)) { New-Item -ItemType Directory -Path $workingsDirectory -Force | Out-Null }
+    $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Boobook.json')
+    $payload = [pscustomobject]@{ ModuleId = 'boobook'; Created = (Get-Date).ToString('s'); SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; WorkingsDirectory = $workingsDirectory; OutputBackupPath = $outputBackupPath; ToolResults = @($toolResult) }
+    $payload | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $summaryPath -Encoding UTF8
+
+    $status = 'Completed'
+    $message = 'Boobook USB artefact processing completed.'
+    if ($toolResult.Status -eq 'Failed') {
+        $status = 'Failed'
+        $message = "boobook failed. See $summaryPath for details."
+    }
+    elseif ($toolResult.Status -match 'Warnings') {
+        $status = 'Completed With Warnings'
+        $message = "Boobook completed with warning(s). See $summaryPath for details."
+    }
+
+    [pscustomobject]@{ ModuleId = 'boobook'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
 }
 
 function Get-IbisRegexValue {
@@ -7466,6 +7711,8 @@ Export-ModuleMember -Function Get-IbisToolAcquisitionPlan
 Export-ModuleMember -Function Format-IbisToolAcquisitionPlan
 Export-ModuleMember -Function Write-IbisProgressEvent
 Export-ModuleMember -Function Get-IbisToolDefinitionById
+Export-ModuleMember -Function Get-IbisModuleGroupName
+Export-ModuleMember -Function Split-IbisModuleBlockColumn
 Export-ModuleMember -Function Resolve-IbisToolDownloadUrl
 Export-ModuleMember -Function Get-IbisToolInstallDirectory
 Export-ModuleMember -Function Get-IbisToolExpectedPath
@@ -7577,6 +7824,9 @@ Export-ModuleMember -Function Rename-IbisSumECmdOutput
 Export-ModuleMember -Function Invoke-IbisUserAccessLogsSum
 Export-ModuleMember -Function Get-IbisBrowserHistoryUsersPath
 Export-ModuleMember -Function Get-IbisWebHistoryToolOutputDirectory
+Export-ModuleMember -Function Get-IbisUsbToolOutputDirectory
+Export-ModuleMember -Function Get-IbisBoobookArgumentList
+Export-ModuleMember -Function Invoke-IbisBoobookUsbArtifacts
 Export-ModuleMember -Function Invoke-IbisBrowsingHistoryView
 Export-ModuleMember -Function Move-IbisForensicWebHistoryOutput
 Export-ModuleMember -Function Invoke-IbisForensicWebHistory

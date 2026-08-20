@@ -1422,6 +1422,7 @@ function Start-IbisProcessingRunspace {
                     'browser-history' { $result = Invoke-IbisBrowsingHistoryView -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     'forensic-webhistory' { $result = Invoke-IbisForensicWebHistory -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     'usb' { $result = Invoke-IbisParseUsbArtifacts -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
+                    'boobook' { $result = Invoke-IbisBoobookUsbArtifacts -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -SourceRoot $SourceRoot -OutputRoot $currentOutputRoot -Hostname $currentHostname }
                     default { throw "Processing module is not implemented: $moduleId" }
                 }
 
@@ -1546,8 +1547,8 @@ function Show-IbisGui {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Ibis v${appVersion}: Tool Runner"
-    $form.Size = New-Object System.Drawing.Size(820, 820)
-    $form.MinimumSize = New-Object System.Drawing.Size(820, 760)
+    $form.Size = New-Object System.Drawing.Size(820, 900)
+    $form.MinimumSize = New-Object System.Drawing.Size(820, 870)
     $form.StartPosition = 'CenterScreen'
     try {
         $form.Icon = New-IbisWindowIcon
@@ -1643,11 +1644,11 @@ function Show-IbisGui {
     $aboutTab.Controls.Add($aboutSummaryTextBox)
 
     $supportLinkLabel = New-Object System.Windows.Forms.LinkLabel
-    $supportLinkLabel.Text = 'Ibis is free and Apache-2.0 licensed. If it saves you time on a case, you can buy me a coffee.'
+    $supportLinkLabel.Text = 'If you find Ibis useful, feel free to BuyMeACoffee, but there''s no obligation.'
     $supportLinkLabel.Location = New-Object System.Drawing.Point(18, 146)
     $supportLinkLabel.Size = New-Object System.Drawing.Size(744, 20)
-    # Link only the closing phrase so the line still reads as a sentence.
-    $supportLinkLabel.LinkArea = New-Object System.Windows.Forms.LinkArea(($supportLinkLabel.Text.IndexOf('buy me a coffee')), 15)
+    # Link only the name so the line still reads as a sentence.
+    $supportLinkLabel.LinkArea = New-Object System.Windows.Forms.LinkArea(($supportLinkLabel.Text.IndexOf('BuyMeACoffee')), 12)
     $supportLinkLabel.Tag = $supportUrl
     $aboutTab.Controls.Add($supportLinkLabel)
 
@@ -1977,8 +1978,17 @@ function Show-IbisGui {
     $moduleGroup = New-Object System.Windows.Forms.GroupBox
     $moduleGroup.Text = 'Processing modules'
     $moduleGroup.Location = New-Object System.Drawing.Point(12, 262)
-    $moduleGroup.Size = New-Object System.Drawing.Size(744, 268)
+    $moduleGroup.Size = New-Object System.Drawing.Size(744, 314)
     $runTab.Controls.Add($moduleGroup)
+
+    $modulePanel = New-Object System.Windows.Forms.Panel
+    $modulePanel.Location = New-Object System.Drawing.Point(10, 18)
+    $modulePanel.Size = New-Object System.Drawing.Size(724, 246)
+    # A safety net rather than an expectation. The columns are sized to hold
+    # every module, but a module added later must not fall off the bottom
+    # where nobody can select it.
+    $modulePanel.AutoScroll = $true
+    $moduleGroup.Controls.Add($modulePanel)
 
     $moduleCheckboxes = @()
     $moduleCheckboxById = @{}
@@ -1987,60 +1997,97 @@ function Show-IbisGui {
     $moduleToolTip.InitialDelay = 400
     $moduleToolTip.ReshowDelay = 100
     $moduleToolTip.ShowAlways = $true
-    $index = 0
-    $rowsPerColumn = [math]::Ceiling($config.modules.Count / 2)
+
+    # Group order follows config.json, so the file is the one place that
+    # decides both what the groups are and what order they read in.
+    $moduleGroupNames = @()
     foreach ($module in $config.modules) {
-        $checkBox = New-Object System.Windows.Forms.CheckBox
-        $checkBox.Text = $module.name
-        $checkBox.Tag = $module
-        $checkBox.Checked = [bool]$module.enabledByDefault
-        $checkBox.Width = 330
-        $column = 0
-        if ($index -ge $rowsPerColumn) {
-            $column = 1
+        $moduleGroupName = Get-IbisModuleGroupName -Module $module
+        if ($moduleGroupNames -notcontains $moduleGroupName) { $moduleGroupNames += $moduleGroupName }
+    }
+
+    $moduleBlocks = @()
+    foreach ($moduleGroupName in $moduleGroupNames) {
+        $members = @($config.modules | Where-Object { (Get-IbisModuleGroupName -Module $_) -eq $moduleGroupName })
+        $moduleBlocks += [pscustomobject]@{ Name = $moduleGroupName; Modules = $members; Rows = ($members.Count + 1) }
+    }
+
+    $moduleColumnCount = 3
+    $moduleColumnWidth = 240
+    $moduleRowHeight = 22
+    # Choose the column breaks that make the tallest column as short as
+    # possible, rather than filling each column to a quota in turn. Filling in
+    # turn leaves whatever will not fit to pile up in the last column, which is
+    # how the USB group ended up below the fold.
+    $moduleColumnOfBlock = Split-IbisModuleBlockColumn -BlockRows @($moduleBlocks | ForEach-Object { $_.Rows }) -ColumnCount $moduleColumnCount
+    $moduleRow = 0
+    $moduleColumn = 0
+    $moduleBlockIndex = 0
+    foreach ($block in $moduleBlocks) {
+        # A group is never split across two columns. Half a group under a
+        # heading in one column and the rest with no heading in the next reads
+        # as two different things.
+        if ($moduleColumnOfBlock[$moduleBlockIndex] -ne $moduleColumn) {
+            $moduleColumn = $moduleColumnOfBlock[$moduleBlockIndex]
+            $moduleRow = 0
         }
-        $row = $index
-        if ($index -ge $rowsPerColumn) {
-            $row = $index - $rowsPerColumn
+        $moduleBlockIndex++
+
+        $groupHeaderLabel = New-Object System.Windows.Forms.Label
+        $groupHeaderLabel.Text = $block.Name
+        $groupHeaderLabel.Font = New-Object System.Drawing.Font($groupHeaderLabel.Font, [System.Drawing.FontStyle]::Bold)
+        $groupHeaderLabel.Location = New-Object System.Drawing.Point(($moduleColumn * $moduleColumnWidth), ($moduleRow * $moduleRowHeight))
+        $groupHeaderLabel.Size = New-Object System.Drawing.Size(($moduleColumnWidth - 8), 18)
+        $modulePanel.Controls.Add($groupHeaderLabel)
+        $moduleRow++
+
+        foreach ($module in $block.Modules) {
+            $checkBox = New-Object System.Windows.Forms.CheckBox
+            $checkBox.Text = $module.name
+            $checkBox.Tag = $module
+            $checkBox.Checked = [bool]$module.enabledByDefault
+            $checkBox.Location = New-Object System.Drawing.Point((12 + ($moduleColumn * $moduleColumnWidth)), ($moduleRow * $moduleRowHeight))
+            $checkBox.Size = New-Object System.Drawing.Size(($moduleColumnWidth - 20), 20)
+            $modulePanel.Controls.Add($checkBox)
+            $moduleCheckboxes += $checkBox
+            $moduleCheckboxById[$module.id] = $checkBox
+            if (-not [string]::IsNullOrWhiteSpace([string]$module.hint)) {
+                $moduleToolTip.SetToolTip($checkBox, [string]$module.hint)
+            }
+            $moduleRow++
         }
-        $checkBox.Location = New-Object System.Drawing.Point((16 + ($column * 360)), (24 + ($row * 22)))
-        $moduleGroup.Controls.Add($checkBox)
-        $moduleCheckboxes += $checkBox
-        $moduleCheckboxById[$module.id] = $checkBox
-        if (-not [string]::IsNullOrWhiteSpace([string]$module.hint)) {
-            $moduleToolTip.SetToolTip($checkBox, [string]$module.hint)
-        }
-        $index++
+
+        $moduleRow++
     }
 
     $selectAllModulesButton = New-Object System.Windows.Forms.Button
     $selectAllModulesButton.Text = 'Select All'
-    $selectAllModulesButton.Location = New-Object System.Drawing.Point(16, 226)
+    $selectAllModulesButton.Location = New-Object System.Drawing.Point(16, 272)
     $selectAllModulesButton.Width = 96
     $moduleGroup.Controls.Add($selectAllModulesButton)
 
     $deselectAllModulesButton = New-Object System.Windows.Forms.Button
     $deselectAllModulesButton.Text = 'Deselect All'
-    $deselectAllModulesButton.Location = New-Object System.Drawing.Point(124, 226)
+    $deselectAllModulesButton.Location = New-Object System.Drawing.Point(124, 272)
     $deselectAllModulesButton.Width = 104
     $moduleGroup.Controls.Add($deselectAllModulesButton)
 
     $runProcessingModulesButton = New-Object System.Windows.Forms.Button
     $runProcessingModulesButton.Text = 'Run Selected Modules'
-    $runProcessingModulesButton.Location = New-Object System.Drawing.Point(370, 226)
+    $runProcessingModulesButton.Location = New-Object System.Drawing.Point(370, 272)
     $runProcessingModulesButton.Width = 150
     $moduleGroup.Controls.Add($runProcessingModulesButton)
 
     $pauseProcessingButton = New-Object System.Windows.Forms.Button
     $pauseProcessingButton.Text = 'Pause'
-    $pauseProcessingButton.Location = New-Object System.Drawing.Point(530, 226)
+    $pauseProcessingButton.Location = New-Object System.Drawing.Point(530, 272)
     $pauseProcessingButton.Width = 82
     $pauseProcessingButton.Enabled = $false
     $moduleGroup.Controls.Add($pauseProcessingButton)
 
     $cancelProcessingButton = New-Object System.Windows.Forms.Button
     $cancelProcessingButton.Text = 'Cancel'
-    $cancelProcessingButton.Location = New-Object System.Drawing.Point(622, 226)
+    $cancelProcessingButton.Location = New-Object System.Drawing.Point(622, 272)
     $cancelProcessingButton.Width = 94
     $cancelProcessingButton.Enabled = $false
     $moduleGroup.Controls.Add($cancelProcessingButton)
@@ -2077,12 +2124,12 @@ function Show-IbisGui {
 
     $runProgressLabel = New-Object System.Windows.Forms.Label
     $runProgressLabel.Text = 'Ready'
-    $runProgressLabel.Location = New-Object System.Drawing.Point(12, 534)
+    $runProgressLabel.Location = New-Object System.Drawing.Point(12, 580)
     $runProgressLabel.Size = New-Object System.Drawing.Size(350, 34)
     $runTab.Controls.Add($runProgressLabel)
 
     $runProgressBar = New-Object System.Windows.Forms.ProgressBar
-    $runProgressBar.Location = New-Object System.Drawing.Point(376, 542)
+    $runProgressBar.Location = New-Object System.Drawing.Point(376, 588)
     $runProgressBar.Size = New-Object System.Drawing.Size(380, 18)
     $runProgressBar.Style = 'Continuous'
     $runProgressBar.Minimum = 0
@@ -2093,8 +2140,8 @@ function Show-IbisGui {
     $runTab.Controls.Add($runProgressBar)
 
     $logTextBox = New-Object System.Windows.Forms.TextBox
-    $logTextBox.Location = New-Object System.Drawing.Point(12, 574)
-    $logTextBox.Size = New-Object System.Drawing.Size(744, 130)
+    $logTextBox.Location = New-Object System.Drawing.Point(12, 620)
+    $logTextBox.Size = New-Object System.Drawing.Size(744, 152)
     $logTextBox.Multiline = $true
     $logTextBox.ScrollBars = 'Vertical'
     $logTextBox.ReadOnly = $true
@@ -3568,7 +3615,7 @@ function Show-IbisGui {
             return
         }
 
-        $implementedProcessingModules = @($selectedModules | Where-Object { $_.id -eq 'system-summary' -or $_.id -eq 'velociraptor-results' -or $_.id -eq 'registry' -or $_.id -eq 'amcache' -or $_.id -eq 'appcompatcache' -or $_.id -eq 'prefetch' -or $_.id -eq 'ntfs-metadata' -or $_.id -eq 'srum' -or $_.id -eq 'user-artifacts' -or $_.id -eq 'eventlogs' -or $_.id -eq 'duckdb-eventlogs' -or $_.id -eq 'hayabusa' -or $_.id -eq 'takajo' -or $_.id -eq 'chainsaw' -or $_.id -eq 'ual' -or $_.id -eq 'browser-history' -or $_.id -eq 'forensic-webhistory' -or $_.id -eq 'usb' })
+        $implementedProcessingModules = @($selectedModules | Where-Object { [string]$_.status -eq 'implemented' })
         if ($implementedProcessingModules.Count -eq 0) {
             Add-IbisLogLine -LogTextBox $logTextBox -Message 'No implemented processing modules are selected yet.'
             $statusLabel.Text = 'No processing modules selected'

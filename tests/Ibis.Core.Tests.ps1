@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.4'
+        $config.version | Should Be '0.7.5'
     }
 
     It 'records release history in the changelog' {
@@ -381,7 +381,7 @@ Describe 'Ibis tool download metadata' {
         $tools = @(Get-IbisToolDefinition -ProjectRoot $projectRoot -Config $config)
         $latestReleaseTools = @($tools | Where-Object { $_.downloadUrl -eq 'latest-release' })
 
-        $latestReleaseTools.Count | Should Be 5
+        $latestReleaseTools.Count | Should Be 6
         foreach ($tool in $latestReleaseTools) {
             [string]::IsNullOrWhiteSpace($tool.githubRepo) | Should Be $false
             [string]::IsNullOrWhiteSpace($tool.assetPattern) | Should Be $false
@@ -892,6 +892,211 @@ Describe 'Ibis setup step indicators' {
     }
 }
 
+Describe 'Ibis USB artefact tools' {
+    It 'gives each USB tool its own folder beneath one USB parent' {
+        $parseUsbs = Get-IbisUsbToolOutputDirectory -OutputRoot 'C:\Export' -Hostname 'HOST01' -ToolFolder 'ParseUSBs'
+        $boobook = Get-IbisUsbToolOutputDirectory -OutputRoot 'C:\Export' -Hostname 'HOST01' -ToolFolder 'Boobook'
+
+        $parseUsbs | Should Be 'C:\Export\HOST01\USB\ParseUSBs'
+        $boobook | Should Be 'C:\Export\HOST01\USB\Boobook'
+    }
+
+    It 'writes both USB tools under the same parent as the event log tools do' {
+        $usbParent = Split-Path -Path (Get-IbisUsbToolOutputDirectory -OutputRoot 'C:\Export' -Hostname 'HOST01' -ToolFolder 'Boobook') -Parent
+        $eventLogParent = Split-Path -Path (Get-IbisEventLogToolOutputDirectory -OutputRoot 'C:\Export' -Hostname 'HOST01' -ToolFolder 'Hayabusa') -Parent
+
+        Split-Path -Path $usbParent -Leaf | Should Be 'USB'
+        Split-Path -Path $usbParent -Parent | Should Be (Split-Path -Path $eventLogParent -Parent)
+    }
+
+    It 'asks boobook to write into the folder Ibis chose' {
+        $arguments = Get-IbisBoobookArgumentList -SourceRoot 'E:\Triage' -OutputDirectory 'C:\Export\HOST01\USB\Boobook' -Hostname 'HOST01'
+
+        $arguments -contains '-in-place' | Should Be $true
+        $arguments[($arguments.IndexOf('-output') + 1)] | Should Be 'C:\Export\HOST01\USB\Boobook'
+        $arguments[($arguments.IndexOf('-evidence') + 1)] | Should Be 'E:\Triage'
+    }
+
+    It 'never asks boobook for a run directory of its own' {
+        # -run-id and -in-place contradict each other, and a run directory
+        # Ibis did not name would hide the results from the output layout.
+        $arguments = Get-IbisBoobookArgumentList -SourceRoot 'E:\Triage' -OutputDirectory 'C:\Out' -Hostname 'HOST01'
+
+        $arguments -contains '-run-id' | Should Be $false
+    }
+
+    It 'silences the progress narration, which Ibis redirects' {
+        $arguments = Get-IbisBoobookArgumentList -SourceRoot 'E:\Triage' -OutputDirectory 'C:\Out'
+
+        $arguments -contains '-quiet' | Should Be $true
+    }
+
+    It 'passes the hostname only when there is one' {
+        $named = Get-IbisBoobookArgumentList -SourceRoot 'E:\Triage' -OutputDirectory 'C:\Out' -Hostname 'HOST01'
+        $blank = Get-IbisBoobookArgumentList -SourceRoot 'E:\Triage' -OutputDirectory 'C:\Out' -Hostname ''
+
+        $named[($named.IndexOf('-host') + 1)] | Should Be 'HOST01'
+        $blank -contains '-host' | Should Be $false
+    }
+
+    It 'skips cleanly when the evidence source is not there' {
+        $outputRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('ibis-boobook-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $result = Invoke-IbisBoobookUsbArtifacts -ToolsRoot 'C:\DFIR\Tools' -ToolDefinitions @() -SourceRoot (Join-Path $outputRoot 'missing') -OutputRoot $outputRoot -Hostname 'HOST01'
+
+            $result.ModuleId | Should Be 'boobook'
+            $result.Status | Should Be 'Skipped'
+        }
+        finally {
+            if (Test-Path -LiteralPath $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
+        }
+    }
+
+    It 'records a failure when boobook is not configured' {
+        $outputRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('ibis-boobook-' + [guid]::NewGuid().ToString('N'))
+        $sourceRoot = Join-Path $outputRoot 'source'
+        New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
+        try {
+            $result = Invoke-IbisBoobookUsbArtifacts -ToolsRoot 'C:\DFIR\Tools' -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot $outputRoot -Hostname 'HOST01'
+
+            $result.Status | Should Be 'Failed'
+            Test-Path -LiteralPath $result.JsonPath | Should Be $true
+            $payload = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+            $payload.ToolResults[0].Message | Should Match 'not configured'
+        }
+        finally {
+            if (Test-Path -LiteralPath $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
+        }
+    }
+}
+
+Describe 'Ibis module grouping' {
+    $config = Get-IbisConfig -ProjectRoot $projectRoot
+
+    It 'gives every module a group' {
+        foreach ($module in $config.modules) {
+            [string]::IsNullOrWhiteSpace($module.group) | Should Be $false
+        }
+    }
+
+    It 'keeps each group together in the file, so run order matches the display' {
+        $seen = @()
+        $previous = ''
+        foreach ($module in $config.modules) {
+            $group = Get-IbisModuleGroupName -Module $module
+            if ($group -ne $previous) {
+                $seen -contains $group | Should Be $false
+                $seen += $group
+                $previous = $group
+            }
+        }
+    }
+
+    It 'keeps the host artefacts in one group' {
+        # Several of these overlap: user artefacts are largely registry hives
+        # and SRUM is a system database, so splitting them drew a line that
+        # does not exist in the evidence.
+        $hostModules = @($config.modules | Where-Object { (Get-IbisModuleGroupName -Module $_) -eq 'System and registry' } | ForEach-Object { $_.id })
+
+        foreach ($id in @('ntfs-metadata', 'srum', 'user-artifacts', 'ual', 'registry', 'amcache')) {
+            $hostModules -contains $id | Should Be $true
+        }
+    }
+
+    It 'reads left to right as host, then event logs, then the rest' {
+        $groups = @(@($config.modules | ForEach-Object { Get-IbisModuleGroupName -Module $_ }) | Select-Object -Unique)
+
+        $groups[0] | Should Be 'System and registry'
+        $groups[1] | Should Be 'Windows Event Logs'
+    }
+
+    It 'groups both USB tools together' {
+        $usbModules = @($config.modules | Where-Object { (Get-IbisModuleGroupName -Module $_) -eq 'USB artefacts' })
+
+        @($usbModules | ForEach-Object { $_.id }) -contains 'usb' | Should Be $true
+        @($usbModules | ForEach-Object { $_.id }) -contains 'boobook' | Should Be $true
+    }
+
+    It 'keeps the tools that depend on another tool in the same group' {
+        # Takajo needs Hayabusa and DuckDB needs EvtxECmd. Showing a module
+        # apart from the one it depends on invites selecting it alone.
+        $byId = @{}
+        foreach ($module in $config.modules) { $byId[$module.id] = Get-IbisModuleGroupName -Module $module }
+
+        $byId['takajo'] | Should Be $byId['hayabusa']
+        $byId['duckdb-eventlogs'] | Should Be $byId['eventlogs']
+    }
+
+    It 'has a dispatch case for every implemented module' {
+        # The run used to filter on a hand-written list of module ids, so a
+        # new module was dropped from every run until someone remembered it.
+        $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
+        foreach ($module in @($config.modules | Where-Object { $_.status -eq 'implemented' })) {
+            $guiText | Should Match ("'" + [regex]::Escape($module.id) + "' " + [regex]::Escape('{ $result = Invoke-Ibis'))
+        }
+    }
+}
+
+Describe 'Ibis module column layout' {
+    It 'balances the columns rather than filling each in turn' {
+        # Filling to a quota put six of the nineteen modules below the fold.
+        (Split-IbisModuleBlockColumn -BlockRows @(7, 5, 6, 3, 3) -ColumnCount 3) -join ',' | Should Be '0,1,1,2,2'
+    }
+
+    It 'settles a tie on the most even spread' {
+        # 11,6,3,3 is eleven rows tall whichever way the last three are split.
+        # Leaving the event logs a column of their own reads better than
+        # filling the middle column and stranding one group on the right.
+        (Split-IbisModuleBlockColumn -BlockRows @(11, 6, 3, 3) -ColumnCount 3) -join ',' | Should Be '0,1,2,2'
+    }
+
+    It 'never splits a group across two columns' {
+        $assignment = @(Split-IbisModuleBlockColumn -BlockRows @(4, 4, 4, 4) -ColumnCount 2)
+
+        $assignment.Count | Should Be 4
+        $assignment -join ',' | Should Be '0,0,1,1'
+    }
+
+    It 'uses no more columns than it was given' {
+        $assignment = @(Split-IbisModuleBlockColumn -BlockRows @(2, 2, 2, 2, 2, 2, 2) -ColumnCount 3)
+
+        (($assignment | Measure-Object -Maximum).Maximum) | Should BeLessThan 3
+    }
+
+    It 'copes with one group and with none' {
+        (Split-IbisModuleBlockColumn -BlockRows @(4) -ColumnCount 3) -join ',' | Should Be '0'
+        @(Split-IbisModuleBlockColumn -BlockRows @() -ColumnCount 3).Count | Should Be 0
+    }
+
+    It 'fits every module without scrolling' {
+        $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
+        $config = Get-IbisConfig -ProjectRoot $projectRoot
+
+        $panelHeight = [int][regex]::Match($guiText, '\$modulePanel\.Size = New-Object System\.Drawing\.Size\(\d+, (\d+)\)').Groups[1].Value
+        $rowHeight = [int][regex]::Match($guiText, '\$moduleRowHeight = (\d+)').Groups[1].Value
+        $columnCount = [int][regex]::Match($guiText, '\$moduleColumnCount = (\d+)').Groups[1].Value
+
+        $blockRows = @()
+        foreach ($group in (@($config.modules | ForEach-Object { Get-IbisModuleGroupName -Module $_ }) | Select-Object -Unique)) {
+            $blockRows += (@($config.modules | Where-Object { (Get-IbisModuleGroupName -Module $_) -eq $group }).Count + 1)
+        }
+
+        $assignment = @(Split-IbisModuleBlockColumn -BlockRows $blockRows -ColumnCount $columnCount)
+        $tallest = 0
+        for ($column = 0; $column -lt $columnCount; $column++) {
+            $rows = 0
+            for ($index = 0; $index -lt $blockRows.Count; $index++) {
+                if ($assignment[$index] -ne $column) { continue }
+                if ($rows -gt 0) { $rows++ }
+                $rows += $blockRows[$index]
+            }
+            if ($rows -gt $tallest) { $tallest = $rows }
+        }
+
+        ($tallest * $rowHeight) | Should BeLessThan ($panelHeight + 1)
+    }
+}
+
 Describe 'Ibis About tab support link' {
     $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
 
@@ -1085,7 +1290,8 @@ Describe 'Ibis processing module dispatch' {
             'Invoke-IbisUserAccessLogsSum',
             'Invoke-IbisBrowsingHistoryView',
             'Invoke-IbisForensicWebHistory',
-            'Invoke-IbisParseUsbArtifacts'
+            'Invoke-IbisParseUsbArtifacts',
+            'Invoke-IbisBoobookUsbArtifacts'
         )
 
         $duplicated = @()

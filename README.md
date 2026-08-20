@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.4`
+Current version: `v0.7.5`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -98,7 +98,7 @@ Typical workflow:
 - `Setup tools`: tools folder, then a numbered left column of machine preparation steps (PowerShell readiness, Defender exclusions, Windows long paths, runtime prerequisites) and a right column for tool management (tool checks, downloads, install assessments, selected-tool reinstall, guidance, Hayabusa rule updates).
 
 Each setup step carries a status symbol in its title: a green tick when it is ready, an amber warning when it needs attention, and a red mark when it blocks work. The symbols are built from Unicode code points rather than written into the source, because Windows PowerShell reads a script without a byte order mark as ANSI.
-- `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel.
+- `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel. Modules are listed under the artefact they read, in three columns: system and registry, Windows Event Logs, then browser history and USB artefacts. The tools that parse the same artefact sit together.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
 - `About`: current version, changelog, and the support link.
@@ -150,6 +150,13 @@ C:\Export\HOSTNAME\WebHistory\BrowsingHistoryView\
 C:\Export\HOSTNAME\WebHistory\ForensicWebHistory\
 ```
 
+USB processors do the same, because more than one tool now reads the same USB artefacts:
+
+```text
+C:\Export\HOSTNAME\USB\ParseUSBs\
+C:\Export\HOSTNAME\USB\Boobook\
+```
+
 If the selected output path is already the host folder, Ibis avoids creating duplicate paths such as `HOSTNAME\HOSTNAME`. If the hostname field is blank, Ibis writes directly under the selected output folder and omits the hostname prefix from output filenames.
 
 Most analyst-facing output files use:
@@ -169,8 +176,9 @@ Examples:
 - `WebHistory\BrowsingHistoryView\HOSTNAME-BrowsingHistoryView-All-Users.csv`
 - `WebHistory\ForensicWebHistory\HOSTNAME-ForensicWebHistory-results.csv`
 - `HOSTNAME-MFTECmd-MFT-Output.csv`
-- `USB\HOSTNAME-ParseUSBs-usb-info.csv`
-- `USB\_Working\HOSTNAME-ParseUSBs-Log.txt`
+- `USB\ParseUSBs\HOSTNAME-ParseUSBs-usb-info.csv`
+- `USB\ParseUSBs\_Working\HOSTNAME-ParseUSBs-Log.txt`
+- `USB\Boobook\report.html`
 
 Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. Empty Takajo workspaces are removed after processing.
 
@@ -258,13 +266,21 @@ Runs `forensic-webhistory scan -d <source> -o <output> --date-format iso` to pro
 
 ### ParseUSBs
 
-Runs parseusbs to extract USB artefact information without writing to the evidence source. Ibis creates a selective, volume-shaped copy in `USB\_Working\ParseUSBs-Evidence-Staging`: system hives and transaction logs, each available `NTUSER.dat` and its logs, user LNK files, and the two USB-relevant event logs when present. Read-only attributes are cleared on the copies so the tool can replay transactions there instead of failing. parseusbs then runs once, in volume mode, against that staging directory. Any hive replay, permission change, or `.restored` file it produces stays in the staging area and the source evidence is unchanged.
+Runs parseusbs to extract USB artefact information without writing to the evidence source. Ibis creates a selective, volume-shaped copy in `USB\ParseUSBs\_Working\ParseUSBs-Evidence-Staging`: system hives and transaction logs, each available `NTUSER.dat` and its logs, user LNK files, and the two USB-relevant event logs when present. Read-only attributes are cleared on the copies so the tool can replay transactions there instead of failing. parseusbs then runs once, in volume mode, against that staging directory. Any hive replay, permission change, or `.restored` file it produces stays in the staging area and the source evidence is unchanged.
 
 Velociraptor percent-encodes the `%` in event log channel names, so `Microsoft-Windows-Partition%4Diagnostic.evtx` is collected as `Microsoft-Windows-Partition%254Diagnostic.evtx`. Ibis accepts either form and stages it under the canonical Windows name, because parseusbs looks for that exact name. The selected name and discovery method are recorded in the USB summary JSON.
 
 Ibis does not use parseusbs explicit hive mode (`-s` / `-w` / `-u`). Version 1.8 crashes in that mode with `NameError: name 'userfolders' is not defined`, even when given the syntax from its own help text, so it can produce no output. Volume mode covers the same registry hives and adds the USB event logs and user LNK files.
 
 When parseusbs finds no USB device connections it writes no CSV. Ibis reports that as a completed result with an explicit "no USB device connections were observed" message, not as a failure. The module is labelled `ParseUSBs` in the GUI.
+
+### Boobook
+
+Runs Boobook over the same evidence source to produce a self-contained analyst report of USB device activity, alongside CSV and JSONL of every device, event, and correlation. Boobook reads the evidence directly rather than through a staging copy, and it recovers hives into its own scratch area, which it removes at the end of the run.
+
+Ibis runs Boobook with `-in-place`, so the results land in `USB\Boobook` rather than in a timestamped run directory Ibis did not name. Boobook refuses `-in-place` into a folder that already holds anything, which is what stops one run writing over another. Ibis therefore moves an earlier Boobook result into `USB\_Boobook-Output-Backups` before it starts, rather than deleting it. `report.html` is the file to open first; `manifest.json` records what was read, what was written, and every hash.
+
+Boobook and ParseUSBs read overlapping artefacts and are both worth running: they disagree usefully, and a device reported by one and not the other is worth knowing about.
 
 ## Tool Management
 
@@ -281,6 +297,7 @@ Current tool set includes:
 - NirSoft BrowsingHistoryView.
 - forensic-webhistory.
 - parseusbs.
+- Boobook.
 
 Ibis supports direct downloads and GitHub latest-release downloads where configured. Installs are staged before publishing to avoid extracting over partial installs. Defender-sensitive tools are staged under their install directory rather than `%TEMP%` where possible, using short `_s\<id>\d` and `_s\<id>\x` staging paths to reduce path-length pressure.
 
@@ -352,7 +369,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.4`, both test runs pass with `199` tests.
+As of `v0.7.5`, both test runs pass with `220` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 
@@ -362,6 +379,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\manual\Verify-Pa
 
 ## Support
 
-Ibis is free and Apache-2.0 licensed. If it saves you time on a case, you can [buy me a coffee](https://buymeacoffee.com/bloggz). There is also a Sponsor button at the top of the repository page.
+If you find Ibis useful, feel free to [BuyMeACoffee](https://buymeacoffee.com/bloggz), but there is no obligation. There is also a Sponsor button at the top of the repository page.
 
-Support is optional and buys no priority, no support obligation, and no influence over what Ibis does.
+Ibis is free and Apache-2.0 licensed, and it stays that way. Supporting it buys no priority, no support obligation, and no influence over what Ibis does.

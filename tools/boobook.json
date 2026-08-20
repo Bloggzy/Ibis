@@ -1,0 +1,13 @@
+{
+  "id": "boobook",
+  "name": "Boobook",
+  "executablePath": "Boobook\\boobook.exe",
+  "installDirectory": "Boobook",
+  "packageType": "file",
+  "downloadFileName": "boobook.exe",
+  "downloadUrl": "latest-release",
+  "githubRepo": "Bloggzy/boobook",
+  "assetPattern": "boobook.exe",
+  "manualUrl": "https://github.com/Bloggzy/boobook/releases/latest",
+  "notes": "Used for parsing USB artefacts into an analyst report, CSV, and JSONL."
+}

@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.4`.
+Current version: `v0.7.5`.
 
 ## Build From Scratch Shape
 
@@ -194,6 +194,9 @@ GUI behaviour:
 - When a processing module throws, record the failure on disk with `Write-IbisModuleFailureSummary` so the output folder shows every selected module, not only the ones that finished.
 - Processing modules are dispatched from one place only: the `switch` inside the processing runspace. Do not add a second dispatch path.
 - The Setup tab reads left to right as the order of work: the numbered machine-preparation groups on the left, tool management on the right. PowerShell readiness is first, because nothing else can run until Ibis itself is allowed to. Keep new setup controls in that order.
+- Every module in `config.json` carries a `group`. The Run tab lists modules under that group, in file order, so `config.json` decides both the reading order and the run order. Keep a group contiguous in the file, and keep a module that depends on another in the same group as it.
+- When more than one tool reads the same artefact, each tool gets its own folder beneath one shared parent: `EventLogs\<Tool>`, `WebHistory\<Tool>`, `USB\<Tool>`. Add the parent with a `Get-Ibis<Artefact>ToolOutputDirectory` helper rather than joining the path at each call site.
+- Do not filter modules by a hand-written list of ids. The run filters on `status -eq 'implemented'` from `config.json`, and a test asserts every implemented module has a dispatch case.
 - Give each setup step a status symbol with `Get-IbisSetupStepIndicator`: green tick for ready, amber warning for attention, red for blocked. Build symbols from code points, never as literal characters, because Windows PowerShell reads a script without a byte order mark as ANSI.
 - Warn before an action whose common failure mode is caused by a skipped setup step. Downloading tools without Defender exclusions is the worked example: `Get-IbisToolDownloadReadiness` decides, and the analyst can still continue.
 - Print a processing summary at the end of each run, especially highlighting failures and explaining skipped modules.

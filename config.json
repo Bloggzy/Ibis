@@ -1,138 +1,164 @@
 ﻿{
-    "name":  "Ibis",
-    "version":  "0.7.4",
-    "defaultToolsRoot":  "C:\\DFIR\\Tools",
-    "defaultSourceRoot":  "C:\\Source\\Evidence",
-    "defaultOutputRoot":  "C:\\Export\\Output",
-    "defaultHostname":  "HOSTNAME",
-    "completionBeepEnabled":  true,
-    "toolDefinitionPath":  "tools",
-    "modules":  [
-                    {
-                        "id":  "system-summary",
-                        "name":  "System summary",
-                        "hint":  "Extracts core host details from offline registry hives using RegRipper.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "velociraptor-results",
-                        "name":  "Velociraptor Results copy-out",
-                        "hint":  "Copies Velociraptor Results folder content into the case output, when present.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "registry",
-                        "name":  "Windows Registry hives",
-                        "hint":  "Caches and processes Windows system registry hives, including dirty hive preparation where possible.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "amcache",
-                        "name":  "Amcache",
-                        "hint":  "Processes the Amcache hive for program execution and application inventory artefacts.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "appcompatcache",
-                        "name":  "AppCompatCache / ShimCache",
-                        "hint":  "Processes SYSTEM hive AppCompatCache / ShimCache entries for execution-related artefacts.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "prefetch",
-                        "name":  "Prefetch",
-                        "hint":  "Prefetch is not normally present on Windows Server systems.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "ntfs-metadata",
-                        "name":  "NTFS metadata ($MFT / $J)",
-                        "hint":  "Processes NTFS $MFT and USN Journal $J files when they can be located.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "srum",
-                        "name":  "SRUM",
-                        "hint":  "Processes SRUDB.dat with the SOFTWARE hive for network and application usage artefacts.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "user-artifacts",
-                        "name":  "User artefacts",
-                        "hint":  "Processes user profile artefacts such as NTUSER.dat, UsrClass.dat, Jump Lists, LNKs, ShellBags, and PSReadLine.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "eventlogs",
-                        "name":  "Windows Event Logs (EvtxECmd)",
-                        "hint":  "Parses Windows EVTX files with EvtxECmd into CSV output.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "duckdb-eventlogs",
-                        "name":  "DuckDB event log summaries",
-                        "hint":  "Creates summary CSVs from EvtxECmd output using editable DuckDB SQL queries.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "hayabusa",
-                        "name":  "Hayabusa event log timeline",
-                        "hint":  "Runs Hayabusa against Windows Event Logs to create a super-verbose JSONL timeline.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "takajo",
-                        "name":  "Takajo Hayabusa analysis",
-                        "hint":  "Runs Takajo automagic analysis over Hayabusa JSONL output. Requires Hayabusa output.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "chainsaw",
-                        "name":  "Chainsaw event log hunting",
-                        "hint":  "Runs Chainsaw over Windows Event Logs for Sigma and event hunting output.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "ual",
-                        "name":  "User Access Logs / SUM",
-                        "hint":  "User Access Logs / SUM are normally found on Windows Server systems.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "browser-history",
-                        "name":  "Browser history (BrowsingHistoryView)",
-                        "hint":  "Runs BrowsingHistoryView against user browser history artefacts.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "forensic-webhistory",
-                        "name":  "Browser history (Forensic webhistory)",
-                        "hint":  "Runs forensic-webhistory over the evidence source and writes ISO-formatted browser history output.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    },
-                    {
-                        "id":  "usb",
-                        "name":  "ParseUSBs",
-                        "hint":  "Runs ParseUSBs in volume mode against a staged copy of the USB-relevant evidence. Any transaction replay stays in the staging area; source evidence is unchanged.",
-                        "enabledByDefault":  true,
-                        "status":  "implemented"
-                    }
-                ]
+  "name": "Ibis",
+  "version": "0.7.5",
+  "defaultToolsRoot": "C:\\DFIR\\Tools",
+  "defaultSourceRoot": "C:\\Source\\Evidence",
+  "defaultOutputRoot": "C:\\Export\\Output",
+  "defaultHostname": "HOSTNAME",
+  "completionBeepEnabled": true,
+  "toolDefinitionPath": "tools",
+  "modules": [
+    {
+      "id": "system-summary",
+      "name": "System summary",
+      "group": "System and registry",
+      "hint": "Extracts core host details from offline registry hives using RegRipper.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "velociraptor-results",
+      "name": "Velociraptor Results copy-out",
+      "group": "System and registry",
+      "hint": "Copies Velociraptor Results folder content into the case output, when present.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "registry",
+      "name": "Windows Registry hives",
+      "group": "System and registry",
+      "hint": "Caches and processes Windows system registry hives, including dirty hive preparation where possible.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "amcache",
+      "name": "Amcache",
+      "group": "System and registry",
+      "hint": "Processes the Amcache hive for program execution and application inventory artefacts.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "appcompatcache",
+      "name": "AppCompatCache / ShimCache",
+      "group": "System and registry",
+      "hint": "Processes SYSTEM hive AppCompatCache / ShimCache entries for execution-related artefacts.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "prefetch",
+      "name": "Prefetch",
+      "group": "System and registry",
+      "hint": "Prefetch is not normally present on Windows Server systems.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "ntfs-metadata",
+      "name": "NTFS metadata ($MFT / $J)",
+      "group": "System and registry",
+      "hint": "Processes NTFS $MFT and USN Journal $J files when they can be located.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "srum",
+      "name": "SRUM",
+      "group": "System and registry",
+      "hint": "Processes SRUDB.dat with the SOFTWARE hive for network and application usage artefacts.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "user-artifacts",
+      "name": "User artefacts",
+      "group": "System and registry",
+      "hint": "Processes user profile artefacts such as NTUSER.dat, UsrClass.dat, Jump Lists, LNKs, ShellBags, and PSReadLine.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "ual",
+      "name": "User Access Logs / SUM",
+      "group": "System and registry",
+      "hint": "User Access Logs / SUM are normally found on Windows Server systems.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "eventlogs",
+      "name": "EvtxECmd",
+      "group": "Windows Event Logs",
+      "hint": "Parses Windows EVTX files with EvtxECmd into CSV output.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "duckdb-eventlogs",
+      "name": "DuckDB summaries",
+      "group": "Windows Event Logs",
+      "hint": "Creates summary CSVs from EvtxECmd output using editable DuckDB SQL queries.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "hayabusa",
+      "name": "Hayabusa timeline",
+      "group": "Windows Event Logs",
+      "hint": "Runs Hayabusa against Windows Event Logs to create a super-verbose JSONL timeline.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "takajo",
+      "name": "Takajo analysis",
+      "group": "Windows Event Logs",
+      "hint": "Runs Takajo automagic analysis over Hayabusa JSONL output. Requires Hayabusa output.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "chainsaw",
+      "name": "Chainsaw hunting",
+      "group": "Windows Event Logs",
+      "hint": "Runs Chainsaw over Windows Event Logs for Sigma and event hunting output.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "browser-history",
+      "name": "BrowsingHistoryView",
+      "group": "Browser history",
+      "hint": "Runs BrowsingHistoryView against user browser history artefacts.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "forensic-webhistory",
+      "name": "Forensic webhistory",
+      "group": "Browser history",
+      "hint": "Runs forensic-webhistory over the evidence source and writes ISO-formatted browser history output.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "usb",
+      "name": "ParseUSBs",
+      "group": "USB artefacts",
+      "hint": "Runs ParseUSBs in volume mode against a staged copy of the USB-relevant evidence. Any transaction replay stays in the staging area; source evidence is unchanged.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    },
+    {
+      "id": "boobook",
+      "name": "Boobook",
+      "group": "USB artefacts",
+      "hint": "Parses USB artefacts with Boobook and writes an analyst report, CSV, and JSONL.",
+      "enabledByDefault": true,
+      "status": "implemented"
+    }
+  ]
 }
