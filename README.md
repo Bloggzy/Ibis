@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.3`
+Current version: `v0.7.4`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -95,7 +95,9 @@ Typical workflow:
 ## GUI Tabs
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
-- `Setup tools`: tools folder, PowerShell readiness checks, tool checks, downloads, install assessments, selected-tool reinstall, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
+- `Setup tools`: tools folder, then a numbered left column of machine preparation steps (PowerShell readiness, Defender exclusions, Windows long paths, runtime prerequisites) and a right column for tool management (tool checks, downloads, install assessments, selected-tool reinstall, guidance, Hayabusa rule updates).
+
+Each setup step carries a status symbol in its title: a green tick when it is ready, an amber warning when it needs attention, and a red mark when it blocks work. The symbols are built from Unicode code points rather than written into the source, because Windows PowerShell reads a script without a byte order mark as ANSI.
 - `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
@@ -172,6 +174,8 @@ Examples:
 
 Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. Empty Takajo workspaces are removed after processing.
 
+A module that fails outright writes no summary of its own, so Ibis records one for it in `_Ibis-Failures\HOSTNAME-<module>-Failure.json` under the output root. It holds the module id and name, the error message, the exception type, the script stack trace, and the source, tools, and output paths used. The run log names the file. Every selected module therefore accounts for itself in the output folder, whether it succeeded or not.
+
 ## Processing Modules
 
 All processing modules are enabled by default in `config.json`. They can be selected or deselected in the `Run tools` tab.
@@ -222,7 +226,11 @@ Optional sub-module of Windows Event Logs. It consumes EvtxECmd CSV output and r
 
 ### Hayabusa
 
-Runs Hayabusa against Windows event logs and produces a super-verbose JSONL timeline. The `Setup tools` tab can also run Hayabusa's rule update workflow.
+Runs Hayabusa against Windows event logs and produces a super-verbose JSONL timeline, plus a CSV timeline. The `Setup tools` tab can also run Hayabusa's rule update workflow.
+
+Hayabusa 4.0.0 replaced the `csv-timeline` and `json-timeline` commands with a single `dfir-timeline` command selected by `-t csv|json|jsonl`, and renamed `--ISO-8601` to `--iso-8601`. Ibis supports both eras. It asks the installed executable which commands it has, then builds the matching arguments, so Hayabusa 3.x and 4.x both work with no configuration. The detected version, the command used, and how it was detected are recorded in the Hayabusa summary JSON.
+
+Ibis always passes `-C`. Without it Hayabusa refuses to overwrite an existing timeline but still exits with code 0 and writes nothing, so re-running a host into the same output folder would silently keep the previous timeline.
 
 ### Takajo
 
@@ -344,7 +352,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.3`, both test runs pass with `162` tests.
+As of `v0.7.4`, both test runs pass with `195` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 

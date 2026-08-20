@@ -1446,6 +1446,19 @@ function Start-IbisProcessingRunspace {
             catch {
                 $errorMessage = $_.Exception.Message
                 Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Failed' -Message "$moduleId failed: $errorMessage" -Index $index -Total $total -Status 'Failed'
+
+                # A throwing module writes no summary of its own, so record the failure
+                # on disk. Otherwise the output folder gives no sign the module ever ran.
+                $failureSummaryPath = Write-IbisModuleFailureSummary `
+                    -OutputRoot $currentOutputRoot `
+                    -ModuleId $moduleId `
+                    -ModuleName $moduleName `
+                    -Hostname $currentHostname `
+                    -ErrorRecord $_ `
+                    -Context @{ SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; ModuleIndex = $index; ModuleTotal = $total }
+                if ($failureSummaryPath) {
+                    Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $moduleId -ToolName $moduleName -Stage 'Summary' -Message $failureSummaryPath -Index $index -Total $total -Status 'Info'
+                }
             }
 
             $snapshotAfter = Get-IbisProcessingSnapshot -RootPath $snapshotBefore.RootPath
@@ -1678,75 +1691,53 @@ function Show-IbisGui {
     $openToolsFolderButton.Width = 136
     $setupTab.Controls.Add($openToolsFolderButton)
 
-    $toolActionsGroup = New-Object System.Windows.Forms.GroupBox
-    $toolActionsGroup.Text = 'Tool management'
-    $toolActionsGroup.Location = New-Object System.Drawing.Point(12, 76)
-    $toolActionsGroup.Size = New-Object System.Drawing.Size(368, 180)
-    $setupTab.Controls.Add($toolActionsGroup)
+    # Setup tab reading order: the left column is everything that must be right
+    # before tools are downloaded, top to bottom. PowerShell readiness comes first
+    # because nothing else can run until Ibis itself is allowed to. Tool management
+    # sits on the right because it comes last. Each group carries a status symbol
+    # so the analyst can see at a glance what still needs doing.
+    $setupStepTitles = @{
+        PowerShell = '1. PowerShell readiness'
+        Defender = '2. Microsoft Defender exclusions'
+        LongPaths = '3. Windows long paths'
+        Runtime = '4. Runtime prerequisites'
+        Tools = '5. Tool management'
+    }
 
-    $checkToolsButton = New-Object System.Windows.Forms.Button
-    $checkToolsButton.Text = 'Recheck Tools'
-    $checkToolsButton.Location = New-Object System.Drawing.Point(12, 28)
-    $checkToolsButton.Width = 112
-    $toolActionsGroup.Controls.Add($checkToolsButton)
+    $powerShellReadinessGroup = New-Object System.Windows.Forms.GroupBox
+    $powerShellReadinessGroup.Text = $setupStepTitles.PowerShell
+    $powerShellReadinessGroup.Location = New-Object System.Drawing.Point(12, 76)
+    $powerShellReadinessGroup.Size = New-Object System.Drawing.Size(368, 48)
+    $setupTab.Controls.Add($powerShellReadinessGroup)
 
-    $toolGuidanceButton = New-Object System.Windows.Forms.Button
-    $toolGuidanceButton.Text = 'Guidance'
-    $toolGuidanceButton.Location = New-Object System.Drawing.Point(12, 68)
-    $toolGuidanceButton.Width = 112
-    $toolActionsGroup.Controls.Add($toolGuidanceButton)
+    $powerShellReadinessStatusLabel = New-Object System.Windows.Forms.Label
+    $powerShellReadinessStatusLabel.Location = New-Object System.Drawing.Point(12, 20)
+    $powerShellReadinessStatusLabel.Size = New-Object System.Drawing.Size(118, 18)
+    $powerShellReadinessStatusLabel.Text = 'Checking...'
+    $powerShellReadinessGroup.Controls.Add($powerShellReadinessStatusLabel)
 
-    $downloadMissingToolsButton = New-Object System.Windows.Forms.Button
-    $downloadMissingToolsButton.Text = 'Download Missing Tools'
-    $downloadMissingToolsButton.Location = New-Object System.Drawing.Point(136, 28)
-    $downloadMissingToolsButton.Width = 214
-    $toolActionsGroup.Controls.Add($downloadMissingToolsButton)
+    $checkPowerShellReadinessButton = New-Object System.Windows.Forms.Button
+    $checkPowerShellReadinessButton.Text = 'Recheck'
+    $checkPowerShellReadinessButton.Location = New-Object System.Drawing.Point(136, 15)
+    $checkPowerShellReadinessButton.Width = 82
+    $powerShellReadinessGroup.Controls.Add($checkPowerShellReadinessButton)
 
-    $updateHayabusaRulesButton = New-Object System.Windows.Forms.Button
-    $updateHayabusaRulesButton.Text = 'Update Hayabusa Rules'
-    $updateHayabusaRulesButton.Location = New-Object System.Drawing.Point(136, 68)
-    $updateHayabusaRulesButton.Width = 214
-    $toolActionsGroup.Controls.Add($updateHayabusaRulesButton)
-
-    $reinstallSelectedToolButton = New-Object System.Windows.Forms.Button
-    $reinstallSelectedToolButton.Text = 'Reinstall Selected'
-    $reinstallSelectedToolButton.Location = New-Object System.Drawing.Point(12, 104)
-    $reinstallSelectedToolButton.Width = 338
-    $reinstallSelectedToolButton.Enabled = $false
-    $toolActionsGroup.Controls.Add($reinstallSelectedToolButton)
-
-    $longPathsLabel = New-Object System.Windows.Forms.Label
-    $longPathsLabel.Text = 'Long paths'
-    $longPathsLabel.Location = New-Object System.Drawing.Point(12, 144)
-    $longPathsLabel.Size = New-Object System.Drawing.Size(82, 20)
-    $toolActionsGroup.Controls.Add($longPathsLabel)
-
-    $enableLongPathsButton = New-Object System.Windows.Forms.Button
-    $enableLongPathsButton.Text = 'Enable'
-    $enableLongPathsButton.Location = New-Object System.Drawing.Point(100, 138)
-    $enableLongPathsButton.Width = 82
-    $toolActionsGroup.Controls.Add($enableLongPathsButton)
-
-    $disableLongPathsButton = New-Object System.Windows.Forms.Button
-    $disableLongPathsButton.Text = 'Disable'
-    $disableLongPathsButton.Location = New-Object System.Drawing.Point(192, 138)
-    $disableLongPathsButton.Width = 82
-    $toolActionsGroup.Controls.Add($disableLongPathsButton)
-
-    $longPathsStatusLabel = New-Object System.Windows.Forms.Label
-    $longPathsStatusLabel.Location = New-Object System.Drawing.Point(284, 143)
-    $longPathsStatusLabel.Size = New-Object System.Drawing.Size(70, 20)
-    $toolActionsGroup.Controls.Add($longPathsStatusLabel)
+    $unblockIbisFilesButton = New-Object System.Windows.Forms.Button
+    $unblockIbisFilesButton.Text = 'Unblock Ibis Files'
+    $unblockIbisFilesButton.Location = New-Object System.Drawing.Point(226, 15)
+    $unblockIbisFilesButton.Width = 130
+    $unblockIbisFilesButton.Enabled = $false
+    $powerShellReadinessGroup.Controls.Add($unblockIbisFilesButton)
 
     $defenderActionsGroup = New-Object System.Windows.Forms.GroupBox
-    $defenderActionsGroup.Text = 'Microsoft Defender exclusions'
-    $defenderActionsGroup.Location = New-Object System.Drawing.Point(394, 76)
-    $defenderActionsGroup.Size = New-Object System.Drawing.Size(362, 96)
+    $defenderActionsGroup.Text = $setupStepTitles.Defender
+    $defenderActionsGroup.Location = New-Object System.Drawing.Point(12, 128)
+    $defenderActionsGroup.Size = New-Object System.Drawing.Size(368, 92)
     $setupTab.Controls.Add($defenderActionsGroup)
 
     $defenderAdminLabel = New-Object System.Windows.Forms.Label
     $defenderAdminLabel.Location = New-Object System.Drawing.Point(12, 18)
-    $defenderAdminLabel.Size = New-Object System.Drawing.Size(338, 18)
+    $defenderAdminLabel.Size = New-Object System.Drawing.Size(344, 18)
     $defenderAdminLabel.Text = 'Checking administrator permissions...'
     $defenderActionsGroup.Controls.Add($defenderAdminLabel)
 
@@ -1768,49 +1759,91 @@ function Show-IbisGui {
     $removeDefenderExclusionsButton.Width = 86
     $defenderActionsGroup.Controls.Add($removeDefenderExclusionsButton)
 
+    $longPathsGroup = New-Object System.Windows.Forms.GroupBox
+    $longPathsGroup.Text = $setupStepTitles.LongPaths
+    $longPathsGroup.Location = New-Object System.Drawing.Point(12, 224)
+    $longPathsGroup.Size = New-Object System.Drawing.Size(368, 48)
+    $setupTab.Controls.Add($longPathsGroup)
+
+    $longPathsStatusLabel = New-Object System.Windows.Forms.Label
+    $longPathsStatusLabel.Location = New-Object System.Drawing.Point(12, 20)
+    $longPathsStatusLabel.Size = New-Object System.Drawing.Size(118, 18)
+    $longPathsGroup.Controls.Add($longPathsStatusLabel)
+
+    $enableLongPathsButton = New-Object System.Windows.Forms.Button
+    $enableLongPathsButton.Text = 'Enable'
+    $enableLongPathsButton.Location = New-Object System.Drawing.Point(136, 15)
+    $enableLongPathsButton.Width = 82
+    $longPathsGroup.Controls.Add($enableLongPathsButton)
+
+    $disableLongPathsButton = New-Object System.Windows.Forms.Button
+    $disableLongPathsButton.Text = 'Disable'
+    $disableLongPathsButton.Location = New-Object System.Drawing.Point(226, 15)
+    $disableLongPathsButton.Width = 82
+    $longPathsGroup.Controls.Add($disableLongPathsButton)
+
     $runtimePrereqGroup = New-Object System.Windows.Forms.GroupBox
-    $runtimePrereqGroup.Text = 'Runtime prerequisites'
-    $runtimePrereqGroup.Location = New-Object System.Drawing.Point(394, 238)
-    $runtimePrereqGroup.Size = New-Object System.Drawing.Size(362, 44)
+    $runtimePrereqGroup.Text = $setupStepTitles.Runtime
+    $runtimePrereqGroup.Location = New-Object System.Drawing.Point(12, 276)
+    $runtimePrereqGroup.Size = New-Object System.Drawing.Size(368, 44)
     $setupTab.Controls.Add($runtimePrereqGroup)
 
     $vcRedistStatusLabel = New-Object System.Windows.Forms.Label
     $vcRedistStatusLabel.Location = New-Object System.Drawing.Point(12, 18)
-    $vcRedistStatusLabel.Size = New-Object System.Drawing.Size(214, 18)
+    $vcRedistStatusLabel.Size = New-Object System.Drawing.Size(220, 18)
     $vcRedistStatusLabel.Text = 'Checking VC++ Redistributable...'
     $runtimePrereqGroup.Controls.Add($vcRedistStatusLabel)
 
     $openVcRedistPageButton = New-Object System.Windows.Forms.Button
     $openVcRedistPageButton.Text = 'Microsoft page'
-    $openVcRedistPageButton.Location = New-Object System.Drawing.Point(236, 14)
+    $openVcRedistPageButton.Location = New-Object System.Drawing.Point(244, 14)
     $openVcRedistPageButton.Width = 112
     $runtimePrereqGroup.Controls.Add($openVcRedistPageButton)
 
-    $powerShellReadinessGroup = New-Object System.Windows.Forms.GroupBox
-    $powerShellReadinessGroup.Text = 'PowerShell readiness'
-    $powerShellReadinessGroup.Location = New-Object System.Drawing.Point(394, 180)
-    $powerShellReadinessGroup.Size = New-Object System.Drawing.Size(362, 50)
-    $setupTab.Controls.Add($powerShellReadinessGroup)
+    $toolActionsGroup = New-Object System.Windows.Forms.GroupBox
+    $toolActionsGroup.Text = $setupStepTitles.Tools
+    $toolActionsGroup.Location = New-Object System.Drawing.Point(394, 76)
+    $toolActionsGroup.Size = New-Object System.Drawing.Size(362, 244)
+    $setupTab.Controls.Add($toolActionsGroup)
 
-    $powerShellReadinessStatusLabel = New-Object System.Windows.Forms.Label
-    $powerShellReadinessStatusLabel.Location = New-Object System.Drawing.Point(12, 20)
-    $powerShellReadinessStatusLabel.Size = New-Object System.Drawing.Size(118, 18)
-    $powerShellReadinessStatusLabel.Text = 'Checking...'
-    $powerShellReadinessGroup.Controls.Add($powerShellReadinessStatusLabel)
+    $checkToolsButton = New-Object System.Windows.Forms.Button
+    $checkToolsButton.Text = 'Recheck Tools'
+    $checkToolsButton.Location = New-Object System.Drawing.Point(12, 28)
+    $checkToolsButton.Width = 112
+    $toolActionsGroup.Controls.Add($checkToolsButton)
 
-    $checkPowerShellReadinessButton = New-Object System.Windows.Forms.Button
-    $checkPowerShellReadinessButton.Text = 'Recheck'
-    $checkPowerShellReadinessButton.Location = New-Object System.Drawing.Point(136, 15)
-    $checkPowerShellReadinessButton.Width = 82
-    $powerShellReadinessGroup.Controls.Add($checkPowerShellReadinessButton)
+    $downloadMissingToolsButton = New-Object System.Windows.Forms.Button
+    $downloadMissingToolsButton.Text = 'Download Missing Tools'
+    $downloadMissingToolsButton.Location = New-Object System.Drawing.Point(130, 28)
+    $downloadMissingToolsButton.Width = 214
+    $toolActionsGroup.Controls.Add($downloadMissingToolsButton)
 
-    $unblockIbisFilesButton = New-Object System.Windows.Forms.Button
-    $unblockIbisFilesButton.Text = 'Unblock Ibis Files'
-    $unblockIbisFilesButton.Location = New-Object System.Drawing.Point(226, 15)
-    $unblockIbisFilesButton.Width = 122
-    $unblockIbisFilesButton.Enabled = $false
-    $powerShellReadinessGroup.Controls.Add($unblockIbisFilesButton)
+    $toolGuidanceButton = New-Object System.Windows.Forms.Button
+    $toolGuidanceButton.Text = 'Guidance'
+    $toolGuidanceButton.Location = New-Object System.Drawing.Point(12, 68)
+    $toolGuidanceButton.Width = 112
+    $toolActionsGroup.Controls.Add($toolGuidanceButton)
 
+    $updateHayabusaRulesButton = New-Object System.Windows.Forms.Button
+    $updateHayabusaRulesButton.Text = 'Update Hayabusa Rules'
+    $updateHayabusaRulesButton.Location = New-Object System.Drawing.Point(130, 68)
+    $updateHayabusaRulesButton.Width = 214
+    $toolActionsGroup.Controls.Add($updateHayabusaRulesButton)
+
+    $reinstallSelectedToolButton = New-Object System.Windows.Forms.Button
+    $reinstallSelectedToolButton.Text = 'Reinstall Selected'
+    $reinstallSelectedToolButton.Location = New-Object System.Drawing.Point(12, 108)
+    $reinstallSelectedToolButton.Width = 332
+    $reinstallSelectedToolButton.Enabled = $false
+    $toolActionsGroup.Controls.Add($reinstallSelectedToolButton)
+
+    # Says whether the steps on the left are done, right beside the button that
+    # depends on them.
+    $downloadReadinessLabel = New-Object System.Windows.Forms.Label
+    $downloadReadinessLabel.Location = New-Object System.Drawing.Point(12, 148)
+    $downloadReadinessLabel.Size = New-Object System.Drawing.Size(332, 84)
+    $downloadReadinessLabel.Text = 'Checking Defender exclusions...'
+    $toolActionsGroup.Controls.Add($downloadReadinessLabel)
     $toolList = New-Object System.Windows.Forms.ListView
     $toolList.Location = New-Object System.Drawing.Point(12, 326)
     $toolList.Size = New-Object System.Drawing.Size(744, 140)
@@ -2239,6 +2272,14 @@ function Show-IbisGui {
         }
     }
 
+    $setSetupStepState = {
+        param($StepGroup, [string]$BaseText, [string]$State)
+
+        $indicator = Get-IbisSetupStepIndicator -State $State
+        $StepGroup.Text = '{0} {1}' -f $indicator.Symbol, $BaseText
+        $StepGroup.ForeColor = [System.Drawing.Color]::FromArgb($indicator.Red, $indicator.Green, $indicator.Blue)
+    }
+
     $updateToolsFolderButtonState = {
         $openToolsFolderButton.Enabled = (-not [string]::IsNullOrWhiteSpace($toolsTextBox.Text) -and (Test-Path -LiteralPath $toolsTextBox.Text -PathType Container))
     }
@@ -2256,6 +2297,7 @@ function Show-IbisGui {
             $longPathsStatusLabel.Text = 'Disabled'
             $longPathsStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
         }
+        & $setSetupStepState $longPathsGroup $setupStepTitles.LongPaths $(if ($longPathsEnabled) { 'Ready' } else { 'Attention' })
     }
 
     $updateVcRedistStatus = {
@@ -2268,6 +2310,7 @@ function Show-IbisGui {
             $vcRedistStatusLabel.Text = 'VC++ 2015+ x64 missing'
             $vcRedistStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
         }
+        & $setSetupStepState $runtimePrereqGroup $setupStepTitles.Runtime $(if ($vcStatus.Present) { 'Ready' } else { 'Attention' })
         $vcStatus
     }
 
@@ -2289,6 +2332,12 @@ function Show-IbisGui {
             $powerShellReadinessStatusLabel.ForeColor = [System.Drawing.Color]::DarkRed
         }
         $unblockIbisFilesButton.Enabled = ($readinessResult.MarkedFiles.Count -gt 0)
+        $powerShellStepState = switch ($readinessResult.Status) {
+            'Ready' { 'Ready' }
+            'Warning' { 'Attention' }
+            default { 'Blocked' }
+        }
+        & $setSetupStepState $powerShellReadinessGroup $setupStepTitles.PowerShell $powerShellStepState
 
         foreach ($guidanceLine in $readinessResult.Guidance) {
             Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "PowerShell readiness: $guidanceLine"
@@ -2297,6 +2346,36 @@ function Show-IbisGui {
             Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text ($readinessResult.Guidance -join "`r`n") -StripAnsi
         }
         $readinessResult
+    }
+
+    $updateDownloadReadiness = {
+        # Reports whether step 1 is done, so the state is visible before the button
+        # is pressed rather than only in a dialog afterwards.
+        try {
+            $downloadReadiness = Get-IbisToolDownloadReadiness -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions
+        }
+        catch {
+            $failureIndicator = Get-IbisSetupStepIndicator -State 'Attention'
+            $downloadReadinessLabel.Text = '{0} Defender exclusion state could not be read: {1}' -f $failureIndicator.Symbol, $_.Exception.Message
+            $downloadReadinessLabel.ForeColor = [System.Drawing.Color]::FromArgb($failureIndicator.Red, $failureIndicator.Green, $failureIndicator.Blue)
+            & $setSetupStepState $defenderActionsGroup $setupStepTitles.Defender 'Attention'
+            return $null
+        }
+
+        $defenderStepState = if ($downloadReadiness.ShouldWarn) { 'Attention' } else { 'Ready' }
+        & $setSetupStepState $defenderActionsGroup $setupStepTitles.Defender $defenderStepState
+        & $setSetupStepState $toolActionsGroup $setupStepTitles.Tools $defenderStepState
+
+        $indicator = Get-IbisSetupStepIndicator -State $defenderStepState
+        if ($downloadReadiness.ShouldWarn) {
+            $downloadReadinessLabel.Text = '{0} {1}{2}' -f $indicator.Symbol, $downloadReadiness.Headline, "`r`n`r`nAdd the exclusions in step 2 before downloading. Defender can quarantine Hayabusa and Chainsaw rule content while it is being extracted."
+        }
+        else {
+            $downloadReadinessLabel.Text = '{0} {1}' -f $indicator.Symbol, $downloadReadiness.Headline
+        }
+        $downloadReadinessLabel.ForeColor = [System.Drawing.Color]::FromArgb($indicator.Red, $indicator.Green, $indicator.Blue)
+
+        $downloadReadiness
     }
 
     $setDefenderControlsForAdmin = {
@@ -2319,6 +2398,7 @@ function Show-IbisGui {
     & $updateToolsFolderButtonState
     [void](& $updateVcRedistStatus)
     [void](& $updatePowerShellReadiness)
+    [void](& $updateDownloadReadiness)
 
     $updateModuleDependencies = {
         if ($moduleCheckboxById.ContainsKey('hayabusa') -and $moduleCheckboxById.ContainsKey('takajo')) {
@@ -2752,6 +2832,7 @@ function Show-IbisGui {
             $statusLabel.Text = "$($statuses.Count) exclusions checked; $($missing.Count) missing"
         }
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
+        [void](& $updateDownloadReadiness)
     })
 
     $addDefenderExclusionsButton.Add_Click({
@@ -2804,6 +2885,7 @@ function Show-IbisGui {
             $statusLabel.Text = 'Defender exclusions updated'
         }
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
+        [void](& $updateDownloadReadiness)
     })
 
     $removeDefenderExclusionsButton.Add_Click({
@@ -2856,6 +2938,7 @@ function Show-IbisGui {
             $statusLabel.Text = 'Defender exclusions removed'
         }
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
+        [void](& $updateDownloadReadiness)
     })
 
     $downloadPollTimer.Add_Tick({
@@ -2964,6 +3047,28 @@ function Show-IbisGui {
             ) | Out-Null
             $statusLabel.Text = 'Tool download blocked by PowerShell readiness'
             return
+        }
+
+        $downloadReadiness = & $updateDownloadReadiness
+        if ($null -ne $downloadReadiness -and $downloadReadiness.ShouldWarn) {
+            $readinessDetail = if ($downloadReadiness.Detail.Count -gt 0) { ($downloadReadiness.Detail -join "`r`n") + "`r`n`r`n" } else { '' }
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Tool download requested while Defender exclusions were not confirmed: $($downloadReadiness.Headline)"
+            $choice = [System.Windows.Forms.MessageBox]::Show(
+                "$($downloadReadiness.Headline)`r`n`r`n$readinessDetail" +
+                "Microsoft Defender can quarantine Hayabusa and Chainsaw rule content while it is being extracted. Tools then look broken rather than blocked.`r`n`r`n" +
+                "Add the exclusions first, then download.`r`n`r`nDownload anyway?",
+                'Defender Exclusions Are Not Confirmed',
+                'YesNo',
+                'Warning'
+            )
+            if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+                Set-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Tool download cancelled. $($downloadReadiness.Headline)`r`n`r`nUse Add under Microsoft Defender exclusions, then download again." -StripAnsi
+                $statusLabel.Text = 'Tool download cancelled pending Defender exclusions'
+                Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
+                return
+            }
+
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message 'Analyst chose to download tools without confirmed Defender exclusions.'
         }
 
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
@@ -3532,370 +3637,6 @@ function Show-IbisGui {
             $outputTextBox.Enabled = $true
             $hostTextBox.Enabled = $true
             $statusLabel.Text = 'Processing failed to start'
-        }
-
-        return
-
-        try {
-            Add-IbisLogLine -LogTextBox $logTextBox -Message "Starting selected processing module run: $($implementedProcessingModules.Count) module(s)."
-            for ($moduleIndex = 0; $moduleIndex -lt $implementedProcessingModules.Count; $moduleIndex++) {
-                $module = $implementedProcessingModules[$moduleIndex]
-                $progressText = "Running $($module.name) ($($moduleIndex + 1) of $($implementedProcessingModules.Count))"
-                $runProgressLabel.Text = $progressText
-                $statusLabel.Text = $progressText
-                Add-IbisLogLine -LogTextBox $logTextBox -Message $progressText
-                $form.Refresh()
-                [System.Windows.Forms.Application]::DoEvents()
-                $result = $null
-                $fileAuditBefore = Get-IbisFileSystemSnapshot -RootPath $outputTextBox.Text
-
-                if ($module.id -eq 'system-summary') {
-                    try {
-                        $result = Invoke-IbisSystemSummary `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputPath)"
-                        if ($result.HostName -and $result.HostName -ne 'Unknown') {
-                            $hostTextBox.Text = $result.HostName
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "system-summary failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'velociraptor-results') {
-                    try {
-                        $result = Invoke-IbisVelociraptorResultsCopy `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.SourcePath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Source: $($result.SourcePath)"
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputPath)"
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "velociraptor-results failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'registry') {
-                    try {
-                        $result = Invoke-IbisWindowsRegistryHives `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "registry failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'amcache') {
-                    try {
-                        $result = Invoke-IbisAmcache `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        }
-                        if ($result.JsonPath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "amcache failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'appcompatcache') {
-                    try {
-                        $result = Invoke-IbisAppCompatCache `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        }
-                        if ($result.JsonPath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "appcompatcache failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'prefetch') {
-                    try {
-                        $result = Invoke-IbisPrefetch `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        }
-                        if ($result.JsonPath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "prefetch failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'srum') {
-                    try {
-                        $result = Invoke-IbisSrum `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        }
-                        if ($result.JsonPath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "srum failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'user-artifacts') {
-                    try {
-                        $result = Invoke-IbisUserArtifacts `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)"
-                        }
-                        if ($result.JsonPath) {
-                            Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)"
-                        }
-                        if ($result.HostOutputRoot) {
-                            $outputTextBox.Text = $result.HostOutputRoot
-                        }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "user-artifacts failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'eventlogs') {
-                    try {
-                        $result = Invoke-IbisEvtxECmdEventLogs `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "eventlogs failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'duckdb-eventlogs') {
-                    try {
-                        $result = Invoke-IbisDuckDbEventLogSummary `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text `
-                            -ProjectRoot $ProjectRoot
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "duckdb-eventlogs failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'hayabusa') {
-                    try {
-                        $result = Invoke-IbisHayabusaEventLogs `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "hayabusa failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'takajo') {
-                    try {
-                        $result = Invoke-IbisTakajoEventLogs `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "takajo failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'chainsaw') {
-                    try {
-                        $result = Invoke-IbisChainsawEventLogs `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "chainsaw failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'ual') {
-                    try {
-                        $result = Invoke-IbisUserAccessLogsSum `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "ual failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'browser-history') {
-                    try {
-                        $result = Invoke-IbisBrowsingHistoryView `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "browser-history failed: $($_.Exception.Message)"
-                    }
-                }
-                elseif ($module.id -eq 'usb') {
-                    try {
-                        $result = Invoke-IbisParseUsbArtifacts `
-                            -ToolsRoot $toolsTextBox.Text `
-                            -ToolDefinitions $toolDefinitions `
-                            -SourceRoot $sourceTextBox.Text `
-                            -OutputRoot $outputTextBox.Text `
-                            -Hostname $hostTextBox.Text
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "$($result.ModuleId): $($result.Status) - $($result.Message)"
-                        if ($result.OutputDirectory) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Output: $($result.OutputDirectory)" }
-                        if ($result.JsonPath) { Add-IbisLogLine -LogTextBox $logTextBox -Message "Summary: $($result.JsonPath)" }
-                        if ($result.HostOutputRoot) { $outputTextBox.Text = $result.HostOutputRoot }
-                    }
-                    catch {
-                        Add-IbisLogLine -LogTextBox $logTextBox -Message "usb failed: $($_.Exception.Message)"
-                    }
-                }
-
-                if ($null -ne $result) {
-                    Add-IbisCommandLineHints -LogTextBox $logTextBox -Result $result -LogFilePath $sessionLogPath
-                    Add-IbisFileOperationHints -Result $result -LogFilePath $sessionLogPath
-                }
-                $fileAuditAfter = Get-IbisFileSystemSnapshot -RootPath $fileAuditBefore.RootPath
-                Add-IbisFileSystemChangeLog -Before $fileAuditBefore -After $fileAuditAfter -Context $module.name -LogFilePath $sessionLogPath
-            }
-
-            $statusLabel.Text = 'Processing module run complete'
-            $runProgressLabel.Text = 'Run complete'
-            & $updateOutputWarning
-        }
-        finally {
-            $runProgressBar.MarqueeAnimationSpeed = 0
-            $runProgressBar.Visible = $false
-            $form.UseWaitCursor = $false
-            foreach ($checkBox in $moduleCheckboxes) {
-                $checkBox.Enabled = $true
-            }
-            if ($moduleCheckboxById.ContainsKey('hayabusa') -and $moduleCheckboxById.ContainsKey('takajo')) {
-                $moduleCheckboxById['takajo'].Enabled = [bool]$moduleCheckboxById['hayabusa'].Checked
-                if (-not $moduleCheckboxById['hayabusa'].Checked) {
-                    $moduleCheckboxById['takajo'].Checked = $false
-                }
-            }
-            if ($moduleCheckboxById.ContainsKey('eventlogs') -and $moduleCheckboxById.ContainsKey('duckdb-eventlogs')) {
-                $moduleCheckboxById['duckdb-eventlogs'].Enabled = [bool]$moduleCheckboxById['eventlogs'].Checked
-                if (-not $moduleCheckboxById['eventlogs'].Checked) {
-                    $moduleCheckboxById['duckdb-eventlogs'].Checked = $false
-                }
-            }
-            $runProcessingModulesButton.Enabled = $true
-            $checkEvidenceButton.Enabled = $true
-            $extractHostNameButton.Enabled = $true
-            $sourceBrowseButton.Enabled = $true
-            $outputBrowseButton.Enabled = $true
-            $sourceTextBox.Enabled = $true
-            $outputTextBox.Enabled = $true
-            $hostTextBox.Enabled = $true
-            & $updateOutputWarning
         }
     })
 

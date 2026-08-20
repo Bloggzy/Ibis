@@ -501,6 +501,128 @@ function Get-IbisDefenderExclusionStatus {
     }
 }
 
+function Get-IbisSetupStepIndicator {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Ready', 'Attention', 'Blocked', 'Unknown')]
+        [string]$State
+    )
+
+    # Symbols are built from code points rather than written literally, because
+    # Windows PowerShell 5.1 reads a .psm1 without a byte order mark as ANSI and
+    # would mangle them.
+    switch ($State) {
+        'Ready' {
+            [pscustomobject]@{
+                State = $State
+                Symbol = [string][char]0x2714
+                Description = 'Ready'
+                Red = 0; Green = 110; Blue = 40
+            }
+        }
+        'Attention' {
+            [pscustomobject]@{
+                State = $State
+                Symbol = [string][char]0x26A0
+                Description = 'Needs attention'
+                Red = 176; Green = 112; Blue = 0
+            }
+        }
+        'Blocked' {
+            [pscustomobject]@{
+                State = $State
+                Symbol = [string][char]0x2716
+                Description = 'Blocked'
+                Red = 168; Green = 0; Blue = 0
+            }
+        }
+        default {
+            [pscustomobject]@{
+                State = 'Unknown'
+                Symbol = [string][char]0x003F
+                Description = 'Not checked yet'
+                Red = 96; Green = 96; Blue = 96
+            }
+        }
+    }
+}
+
+function Get-IbisToolDownloadReadiness {
+    [CmdletBinding()]
+    param(
+        [string]$ToolsRoot,
+
+        [object[]]$ToolDefinitions,
+
+        # Supplying statuses avoids a second Defender query, and lets tests cover
+        # every outcome without Defender being installed.
+        [object[]]$ExclusionStatus
+    )
+
+    # Downloading before the Defender exclusions exist is the most common way a
+    # first run goes wrong: Defender quarantines Hayabusa or Chainsaw rule content
+    # mid-extraction, and the tool looks broken rather than blocked.
+    if ($null -eq $ExclusionStatus) {
+        $ExclusionStatus = @(Get-IbisDefenderExclusionStatus -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions)
+    }
+
+    $statuses = @($ExclusionStatus)
+    $missing = @($statuses | Where-Object { $_.Status -eq 'Missing' })
+    $failed = @($statuses | Where-Object { $_.Status -eq 'Failed' })
+    $unavailable = @($statuses | Where-Object { $_.Status -eq 'Unavailable' })
+    $isAdministrator = [bool](@($statuses | Where-Object { $_.IsAdministrator }).Count -gt 0)
+
+    if ($statuses.Count -eq 0) {
+        $status = 'NoneRecommended'
+        $shouldWarn = $false
+        $headline = 'No Defender exclusions are recommended for the configured tools.'
+        $detail = @()
+    }
+    elseif ($unavailable.Count -eq $statuses.Count) {
+        # Microsoft Defender is not the active scanner here, so there is nothing
+        # for Ibis to exclude and nothing useful to warn about.
+        $status = 'DefenderUnavailable'
+        $shouldWarn = $false
+        $headline = 'Microsoft Defender is not available on this machine, so no exclusions are needed.'
+        $detail = @()
+    }
+    elseif ($failed.Count -gt 0) {
+        $status = 'CheckFailed'
+        $shouldWarn = $true
+        $headline = 'The Defender exclusion check failed, so Ibis cannot confirm the tools are protected.'
+        $detail = @($failed | ForEach-Object { '{0}: {1}' -f $_.Name, $_.Message })
+    }
+    elseif ($missing.Count -gt 0 -and -not $isAdministrator) {
+        $status = 'NotAuthoritative'
+        $shouldWarn = $true
+        $headline = 'Ibis is not running as Administrator, so it cannot confirm the Defender exclusions are in place.'
+        $detail = @($missing | ForEach-Object { '{0}: {1}' -f $_.Name, $_.Path })
+    }
+    elseif ($missing.Count -gt 0) {
+        $status = 'ExclusionsMissing'
+        $shouldWarn = $true
+        $headline = '{0} of {1} recommended Defender exclusions are missing.' -f $missing.Count, $statuses.Count
+        $detail = @($missing | ForEach-Object { '{0}: {1}' -f $_.Name, $_.Path })
+    }
+    else {
+        $status = 'Ready'
+        $shouldWarn = $false
+        $headline = 'All {0} recommended Defender exclusions are in place.' -f $statuses.Count
+        $detail = @()
+    }
+
+    [pscustomobject]@{
+        Status = $status
+        ShouldWarn = $shouldWarn
+        Headline = $headline
+        Detail = @($detail)
+        RecommendedCount = $statuses.Count
+        MissingCount = $missing.Count
+        IsAdministrator = $isAdministrator
+    }
+}
+
 function Add-IbisDefenderExclusion {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -5688,6 +5810,96 @@ function Move-IbisExistingDirectoryToBackup {
     $backupPath
 }
 
+function Get-IbisHayabusaCapability {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HayabusaPath,
+
+        [string]$HelpText
+    )
+
+    # Hayabusa 4.0.0 merged csv-timeline and json-timeline into dfir-timeline and
+    # dropped the old names entirely. Ibis supports both eras, so ask the installed
+    # executable which commands it has rather than assuming a version.
+    if ([string]::IsNullOrWhiteSpace($HelpText)) {
+        try {
+            $helpResult = Invoke-IbisProcessCapture -FilePath $HayabusaPath -ArgumentList @('help') -WorkingDirectory (Split-Path -Path $HayabusaPath -Parent) -TimeoutSeconds 120
+            $HelpText = ($helpResult.StandardOutput, $helpResult.StandardError) -join [Environment]::NewLine
+        }
+        catch {
+            $HelpText = ''
+        }
+    }
+
+    $version = $null
+    $versionMatch = [regex]::Match($HelpText, 'Hayabusa\s+v(\d+(?:\.\d+)*)')
+    if ($versionMatch.Success) {
+        $version = $versionMatch.Groups[1].Value
+    }
+
+    if ($HelpText -match '(?m)^\s*dfir-timeline\b') {
+        $timelineCommand = 'dfir-timeline'
+        $detectionMethod = 'Found dfir-timeline in the command list'
+    }
+    elseif ($HelpText -match '(?m)^\s*csv-timeline\b') {
+        $timelineCommand = 'csv-timeline'
+        $detectionMethod = 'Found csv-timeline in the command list'
+    }
+    else {
+        # Ibis installs whatever the latest release is, so assume the current layout
+        # when the help output cannot be read.
+        $timelineCommand = 'dfir-timeline'
+        $detectionMethod = 'Assumed current layout because the command list could not be read'
+    }
+
+    [pscustomobject]@{
+        HayabusaPath = $HayabusaPath
+        Version = $version
+        TimelineCommand = $timelineCommand
+        UsesOutputType = ($timelineCommand -eq 'dfir-timeline')
+        DetectionMethod = $detectionMethod
+    }
+}
+
+function Get-IbisHayabusaTimelineArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Capability,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('csv', 'jsonl')]
+        [string]$Format,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+
+        [string]$OutputProfile = 'super-verbose'
+    )
+
+    # -C overwrites an existing timeline. Without it Hayabusa refuses to write but
+    # still exits 0, which would leave a stale file behind and look like success.
+    if ($Capability.UsesOutputType) {
+        if ($Format -eq 'csv') {
+            return @('dfir-timeline', '-d', $SourceDirectory, '-t', 'csv', '--iso-8601', '-o', $OutputPath, '-w', '-C')
+        }
+
+        return @('dfir-timeline', '-d', $SourceDirectory, '-t', 'jsonl', '-x', '-U', '-a', '-A', '-w', '-p', $OutputProfile, '-o', $OutputPath, '-C')
+    }
+
+    # Hayabusa 3.x and earlier: separate commands, capitalised long options, and
+    # -L to ask json-timeline for JSONL rather than JSON.
+    if ($Format -eq 'csv') {
+        return @('csv-timeline', '-d', $SourceDirectory, '--ISO-8601', '-o', $OutputPath, '-w', '-C')
+    }
+
+    @('json-timeline', '-d', $SourceDirectory, '-x', '-U', '-a', '-A', '-w', '-p', $OutputProfile, '-L', '-o', $OutputPath, '-C')
+}
+
 function Invoke-IbisHayabusaEventLogs {
     [CmdletBinding()]
     param(
@@ -5745,19 +5957,23 @@ function Invoke-IbisHayabusaEventLogs {
             $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; OutputPath = $hayabusaJsonlPath; Status = 'Failed'; ExitCode = $null; Message = "Hayabusa is missing at: $hayabusaPath" }
         }
         else {
-            $csvResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList @('csv-timeline', '-d', $sourceDirectory, '--ISO-8601', '-o', $hayabusaCsvPath, '-w') -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
+            $capability = Get-IbisHayabusaCapability -HayabusaPath $hayabusaPath
+
+            $csvArguments = Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'csv' -SourceDirectory $sourceDirectory -OutputPath $hayabusaCsvPath
+            $csvResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList $csvArguments -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
             $csvStatus = 'Completed'
             $csvMessage = 'Hayabusa CSV timeline completed.'
             if ($csvResult.ExitCode -ne 0) { $csvStatus = 'Failed'; $csvMessage = "Hayabusa CSV timeline exited with code $($csvResult.ExitCode)." }
             elseif (-not (Test-Path -LiteralPath $hayabusaCsvPath -PathType Leaf)) { $csvStatus = 'Completed With Warnings'; $csvMessage = 'Hayabusa CSV timeline completed, but the expected CSV was not found.' }
-            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = 'csv-timeline'; OutputPath = $hayabusaCsvPath; Status = $csvStatus; ExitCode = $csvResult.ExitCode; CommandLine = $csvResult.CommandLine; Message = $csvMessage }
+            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (csv)'; OutputPath = $hayabusaCsvPath; Status = $csvStatus; ExitCode = $csvResult.ExitCode; CommandLine = $csvResult.CommandLine; Message = $csvMessage }
 
-            $jsonResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList @('json-timeline', '-d', $sourceDirectory, '-x', '-U', '-a', '-A', '-w', '-p', 'super-verbose', '-L', '-o', $hayabusaJsonlPath) -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
+            $jsonArguments = Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory $sourceDirectory -OutputPath $hayabusaJsonlPath
+            $jsonResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList $jsonArguments -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
             $jsonStatus = 'Completed'
             $jsonMessage = 'Hayabusa JSONL timeline completed.'
             if ($jsonResult.ExitCode -ne 0) { $jsonStatus = 'Failed'; $jsonMessage = "Hayabusa JSONL timeline exited with code $($jsonResult.ExitCode)." }
             elseif (-not (Test-Path -LiteralPath $hayabusaJsonlPath -PathType Leaf)) { $jsonStatus = 'Completed With Warnings'; $jsonMessage = 'Hayabusa JSONL timeline completed, but the expected JSONL was not found.' }
-            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = 'json-timeline'; OutputPath = $hayabusaJsonlPath; Status = $jsonStatus; ExitCode = $jsonResult.ExitCode; CommandLine = $jsonResult.CommandLine; Message = $jsonMessage }
+            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (jsonl)'; OutputPath = $hayabusaJsonlPath; Status = $jsonStatus; ExitCode = $jsonResult.ExitCode; CommandLine = $jsonResult.CommandLine; Message = $jsonMessage }
         }
     }
 
@@ -5765,6 +5981,9 @@ function Invoke-IbisHayabusaEventLogs {
     $payload = [pscustomobject]@{
         ModuleId = 'hayabusa'
         Created = (Get-Date).ToString('s')
+        HayabusaVersion = if ($capability) { $capability.Version } else { $null }
+        HayabusaTimelineCommand = if ($capability) { $capability.TimelineCommand } else { $null }
+        HayabusaDetectionMethod = if ($capability) { $capability.DetectionMethod } else { $null }
         SourceRoot = $SourceRoot
         SourceDirectory = $sourceDirectory
         ToolsRoot = $ToolsRoot
@@ -5839,6 +6058,95 @@ function Save-IbisTakajoStandardError {
         return $path
     }
     catch {
+        return $null
+    }
+}
+
+function Get-IbisModuleFailureDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot
+    )
+
+    Join-Path $OutputRoot '_Ibis-Failures'
+}
+
+function Write-IbisModuleFailureSummary {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$OutputRoot,
+
+        [AllowEmptyString()]
+        [string]$ModuleId,
+
+        [string]$ModuleName = '',
+
+        [string]$Hostname = '',
+
+        [string]$Message = '',
+
+        $ErrorRecord,
+
+        [hashtable]$Context
+    )
+
+    # A module that throws used to leave nothing on disk, so an analyst reviewing
+    # the output folder later had no record of the failure at all. Write the same
+    # kind of summary JSON a completed module writes, so every selected module
+    # accounts for itself.
+    if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+        return $null
+    }
+
+    try {
+        $failureDirectory = Get-IbisModuleFailureDirectory -OutputRoot $OutputRoot
+        if (-not (Test-Path -LiteralPath $failureDirectory)) {
+            New-Item -ItemType Directory -Path $failureDirectory -Force | Out-Null
+        }
+
+        $safeHost = ConvertTo-IbisSafeFileName -Value $Hostname -DefaultValue ''
+        $safeModuleId = ConvertTo-IbisSafeFileName -Value $ModuleId -DefaultValue 'module'
+        $fileName = New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ('{0}-Failure.json' -f $safeModuleId)
+        $summaryPath = Join-Path $failureDirectory $fileName
+
+        $failureMessage = $Message
+        $exceptionType = $null
+        $scriptStackTrace = $null
+        if ($null -ne $ErrorRecord) {
+            if ([string]::IsNullOrWhiteSpace($failureMessage) -and $ErrorRecord.Exception) {
+                $failureMessage = $ErrorRecord.Exception.Message
+            }
+            if ($ErrorRecord.Exception) {
+                $exceptionType = $ErrorRecord.Exception.GetType().FullName
+            }
+            if ($ErrorRecord.PSObject.Properties['ScriptStackTrace']) {
+                $scriptStackTrace = $ErrorRecord.ScriptStackTrace
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($failureMessage)) {
+            $failureMessage = 'The module failed without reporting a message.'
+        }
+
+        $payload = [pscustomobject]@{
+            ModuleId = $ModuleId
+            ModuleName = if ([string]::IsNullOrWhiteSpace($ModuleName)) { $ModuleId } else { $ModuleName }
+            Created = (Get-Date).ToString('s')
+            Status = 'Failed'
+            Message = $failureMessage
+            ExceptionType = $exceptionType
+            ScriptStackTrace = $scriptStackTrace
+            Hostname = $Hostname
+            OutputRoot = $OutputRoot
+            Context = if ($Context) { [pscustomobject]$Context } else { $null }
+        }
+        $payload | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $summaryPath -Encoding UTF8
+
+        return $summaryPath
+    }
+    catch {
+        # Never let the failure recorder become a second failure.
         return $null
     }
 }
@@ -7164,6 +7472,8 @@ Export-ModuleMember -Function Get-IbisToolExpectedPath
 Export-ModuleMember -Function Test-IbisIsAdministrator
 Export-ModuleMember -Function Get-IbisDefenderExclusionRecommendation
 Export-ModuleMember -Function Get-IbisDefenderExclusionStatus
+Export-ModuleMember -Function Get-IbisSetupStepIndicator
+Export-ModuleMember -Function Get-IbisToolDownloadReadiness
 Export-ModuleMember -Function Add-IbisDefenderExclusion
 Export-ModuleMember -Function Remove-IbisDefenderExclusion
 Export-ModuleMember -Function Get-IbisSevenZipPath
@@ -7250,9 +7560,13 @@ Export-ModuleMember -Function ConvertTo-IbisDuckDbSqlLiteral
 Export-ModuleMember -Function Expand-IbisDuckDbSqlTemplate
 Export-ModuleMember -Function Invoke-IbisDuckDbEventLogSummary
 Export-ModuleMember -Function Move-IbisExistingDirectoryToBackup
+Export-ModuleMember -Function Get-IbisHayabusaCapability
+Export-ModuleMember -Function Get-IbisHayabusaTimelineArgumentList
 Export-ModuleMember -Function Invoke-IbisHayabusaEventLogs
 Export-ModuleMember -Function Get-IbisHayabusaJsonlPath
 Export-ModuleMember -Function Save-IbisTakajoStandardError
+Export-ModuleMember -Function Get-IbisModuleFailureDirectory
+Export-ModuleMember -Function Write-IbisModuleFailureSummary
 Export-ModuleMember -Function Get-IbisToolErrorExcerpt
 Export-ModuleMember -Function Invoke-IbisTakajoEventLogs
 Export-ModuleMember -Function Rename-IbisToolOutputFiles

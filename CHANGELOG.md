@@ -4,6 +4,18 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.4 - 2026-08-20
+
+- A processing module that throws now writes a failure summary to `_Ibis-Failures\HOSTNAME-<module>-Failure.json` under the output root, recording the error message, exception type, script stack trace, and the source, tools, and output paths used. Previously a throwing module left nothing on disk, so the output folder gave no sign it had ever run. The run log names the file.
+- The failure recorder never raises an error of its own, so one failing module cannot take down the rest of the run.
+- Removed 364 lines of unreachable code from the `Run tools` button handler. A bare `return` sat above a second, full module dispatch chain that had not run since processing moved into a background runspace. Editing it had no effect, which made it a trap. Processing modules are now dispatched from one place only, and tests enforce that.
+- Added support for Hayabusa 4.0.0, which merged `csv-timeline` and `json-timeline` into `dfir-timeline` and renamed `--ISO-8601` to `--iso-8601`. Both of the old commands now exit 2, so Hayabusa stopped working for anyone who installed or reinstalled it. Ibis asks the installed executable which commands it has and builds the right arguments, so Hayabusa 3.x and 4.x both work. The detected version, command, and detection method are recorded in the Hayabusa summary JSON.
+- Hayabusa is now always run with `-C`. Without it Hayabusa refuses to overwrite an existing timeline but still exits 0 and writes nothing, so re-running a host into the same output folder silently kept the previous timeline and reported success. This affected Hayabusa 3.x as well.
+- Reorganised the `Setup tools` tab so it reads in the order the work has to happen. The left column now holds the numbered machine-preparation steps: PowerShell readiness, Defender exclusions, Windows long paths, and runtime prerequisites. Tool management moved to the right column as step 5. Long path controls moved out of the tool management group into their own group.
+- Every setup step now shows a status symbol in its title: a green tick when it is ready, an amber warning when it needs attention, and a red mark when it blocks work. Tool management shows the warning until the Defender exclusions are confirmed.
+- `Download Missing Tools` now checks the Defender exclusions first and warns before downloading if they are missing, cannot be confirmed from a standard-user session, or could not be checked. The analyst can still continue, and the choice is recorded in the log. Downloading before adding exclusions let Defender quarantine Hayabusa and Chainsaw rule content mid-extraction, which made the tools look broken rather than blocked.
+- Tool management now shows the Defender exclusion state next to the download button, so it is visible before the button is pressed.
+
 ## v0.7.3 - 2026-08-20
 
 - Cancelling a processing run now stops the external tool that is currently running instead of waiting for it to finish. Ibis stops the process and its children, records the reason in the captured stderr, and reports `Cancelled` on the tool result.

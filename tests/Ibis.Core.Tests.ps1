@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.3'
+        $config.version | Should Be '0.7.4'
     }
 
     It 'records release history in the changelog' {
@@ -788,6 +788,353 @@ Describe 'Ibis command specs' {
         $result.ExitCode | Should Be 0
         $result.StandardOutput.Length -gt 100000 | Should Be $true
         $result.StandardError.Length -gt 100000 | Should Be $true
+    }
+}
+
+Describe 'Ibis tool download readiness' {
+    It 'is ready when every recommended exclusion is present' {
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @([pscustomobject]@{ Name = 'Hayabusa'; Path = 'C:\T\H'; Status = 'Present'; Present = $true; IsAdministrator = $true; Message = 'x' })
+
+        $readiness.Status | Should Be 'Ready'
+        $readiness.ShouldWarn | Should Be $false
+    }
+
+    It 'warns when an exclusion is missing' {
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @(
+            [pscustomobject]@{ Name = 'Hayabusa'; Path = 'C:\T\H'; Status = 'Missing'; Present = $false; IsAdministrator = $true; Message = 'x' },
+            [pscustomobject]@{ Name = 'Chainsaw'; Path = 'C:\T\C'; Status = 'Present'; Present = $true; IsAdministrator = $true; Message = 'x' }
+        )
+
+        $readiness.Status | Should Be 'ExclusionsMissing'
+        $readiness.ShouldWarn | Should Be $true
+        $readiness.MissingCount | Should Be 1
+        $readiness.Headline | Should Match '1 of 2'
+        ($readiness.Detail -join ' ') | Should Match 'Hayabusa'
+    }
+
+    It 'warns that a standard-user check cannot be trusted' {
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @([pscustomobject]@{ Name = 'Hayabusa'; Path = 'C:\T\H'; Status = 'Missing'; Present = $false; IsAdministrator = $false; Message = 'x' })
+
+        $readiness.Status | Should Be 'NotAuthoritative'
+        $readiness.ShouldWarn | Should Be $true
+        $readiness.Headline | Should Match 'Administrator'
+    }
+
+    It 'does not warn when Defender is not the active scanner' {
+        # Nothing to exclude, so nagging on every download would be noise.
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @([pscustomobject]@{ Name = 'Hayabusa'; Path = 'C:\T\H'; Status = 'Unavailable'; Present = $false; IsAdministrator = $false; Message = 'x' })
+
+        $readiness.Status | Should Be 'DefenderUnavailable'
+        $readiness.ShouldWarn | Should Be $false
+    }
+
+    It 'warns when the exclusion check itself failed' {
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @([pscustomobject]@{ Name = 'Hayabusa'; Path = 'C:\T\H'; Status = 'Failed'; Present = $false; IsAdministrator = $true; Message = 'x' })
+
+        $readiness.Status | Should Be 'CheckFailed'
+        $readiness.ShouldWarn | Should Be $true
+    }
+
+    It 'does not warn when no exclusions are recommended' {
+        $readiness = Get-IbisToolDownloadReadiness -ExclusionStatus @()
+
+        $readiness.Status | Should Be 'NoneRecommended'
+        $readiness.ShouldWarn | Should Be $false
+    }
+}
+
+Describe 'Ibis setup step indicators' {
+    It 'marks a finished step with a green tick' {
+        $indicator = Get-IbisSetupStepIndicator -State 'Ready'
+
+        [int][char]$indicator.Symbol | Should Be 0x2714
+        $indicator.Green | Should BeGreaterThan $indicator.Red
+    }
+
+    It 'marks a step that needs action with an amber warning' {
+        $indicator = Get-IbisSetupStepIndicator -State 'Attention'
+
+        [int][char]$indicator.Symbol | Should Be 0x26A0
+        $indicator.Red | Should BeGreaterThan 128
+        $indicator.Blue | Should Be 0
+    }
+
+    It 'marks a blocked step in red' {
+        $indicator = Get-IbisSetupStepIndicator -State 'Blocked'
+
+        [int][char]$indicator.Symbol | Should Be 0x2716
+        $indicator.Red | Should BeGreaterThan $indicator.Green
+    }
+
+    It 'uses a neutral marker before anything has been checked' {
+        $indicator = Get-IbisSetupStepIndicator -State 'Unknown'
+
+        $indicator.State | Should Be 'Unknown'
+        $indicator.Red | Should Be $indicator.Green
+    }
+
+    It 'builds symbols from code points so Windows PowerShell cannot mangle them' {
+        # A .psm1 without a byte order mark is read as ANSI by Windows PowerShell,
+        # which would turn a literal tick into nonsense.
+        $moduleText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+        $start = $moduleText.IndexOf('function Get-IbisSetupStepIndicator {')
+        $end = $moduleText.IndexOf('function ', $start + 40)
+        $body = $moduleText.Substring($start, $end - $start)
+
+        $body | Should Match '\[char\]0x2714'
+        $body | Should Match '\[char\]0x26A0'
+    }
+
+    It 'returns one symbol character per state' {
+        foreach ($state in @('Ready', 'Attention', 'Blocked', 'Unknown')) {
+            (Get-IbisSetupStepIndicator -State $state).Symbol.Length | Should Be 1
+        }
+    }
+}
+
+Describe 'Ibis setup tab layout' {
+    $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
+
+    function Get-IbisTestControlPoint {
+        param([string]$Text, [string]$VariableName, [string]$Property)
+
+        $pattern = '\$' + $VariableName + '\.' + $Property + ' = New-Object System\.Drawing\.(?:Point|Size)\((\d+), (\d+)\)'
+        $match = [regex]::Match($Text, $pattern)
+        if (-not $match.Success) { throw "Could not find $VariableName.$Property" }
+        [pscustomobject]@{ X = [int]$match.Groups[1].Value; Y = [int]$match.Groups[2].Value }
+    }
+
+    It 'puts the preparation steps in the left column, in order' {
+        # The analyst reads left to right, so everything that must happen before
+        # tools are downloaded belongs on the left, top to bottom.
+        # Nothing else can be done until Ibis itself is allowed to run, so the
+        # PowerShell check is the first thing the analyst should see.
+        $groups = @('powerShellReadinessGroup', 'defenderActionsGroup', 'longPathsGroup', 'runtimePrereqGroup')
+        $previousBottom = 0
+        foreach ($group in $groups) {
+            $location = Get-IbisTestControlPoint -Text $guiText -VariableName $group -Property 'Location'
+            $size = Get-IbisTestControlPoint -Text $guiText -VariableName $group -Property 'Size'
+
+            $location.X | Should Be 12
+            ($location.Y -ge $previousBottom) | Should Be $true
+            $previousBottom = $location.Y + $size.Y
+        }
+
+        # Nothing may run into the tool list below.
+        ($previousBottom -le 326) | Should Be $true
+    }
+
+    It 'puts tool management in the right column' {
+        $tools = Get-IbisTestControlPoint -Text $guiText -VariableName 'toolActionsGroup' -Property 'Location'
+        $firstStep = Get-IbisTestControlPoint -Text $guiText -VariableName 'powerShellReadinessGroup' -Property 'Location'
+
+        ($tools.X -gt $firstStep.X) | Should Be $true
+        $tools.Y | Should Be $firstStep.Y
+    }
+
+    It 'numbers the setup steps so the order is obvious' {
+        $guiText | Should Match "PowerShell = '1\. "
+        $guiText | Should Match "Defender = '2\. "
+        $guiText | Should Match "LongPaths = '3\. "
+        $guiText | Should Match "Runtime = '4\. "
+        $guiText | Should Match "Tools = '5\. "
+    }
+
+    It 'gives every setup step a status symbol' {
+        foreach ($group in @('powerShellReadinessGroup', 'defenderActionsGroup', 'longPathsGroup', 'runtimePrereqGroup', 'toolActionsGroup')) {
+            $guiText | Should Match ('setSetupStepState \$' + $group)
+        }
+    }
+
+    It 'checks Defender exclusions before downloading tools' {
+        $start = $guiText.IndexOf('$downloadMissingToolsButton.Add_Click(')
+        $handler = $guiText.Substring($start, 4000)
+
+        $handler | Should Match 'updateDownloadReadiness'
+        $handler | Should Match 'Defender Exclusions Are Not Confirmed'
+    }
+}
+
+Describe 'Ibis Hayabusa version handling' {
+    $v4Help = "Hayabusa v4.0.0 - Black Hat USA Arsenal 2026 Release`n`nCommands:`n  computer-metrics         Output the total number of events`n  dfir-timeline            Create a DFIR timeline`n  update-rules             Update to the latest rules"
+    $v3Help = "Hayabusa v3.10.0 - Independence Day Release`n`nCommands:`n  csv-timeline             Save the timeline in CSV format`n  json-timeline            Save the timeline in JSON format`n  update-rules             Update to the latest rules"
+
+    It 'detects the Hayabusa 4 command set' {
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $v4Help
+
+        $capability.Version | Should Be '4.0.0'
+        $capability.TimelineCommand | Should Be 'dfir-timeline'
+        $capability.UsesOutputType | Should Be $true
+    }
+
+    It 'detects the Hayabusa 3 command set' {
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $v3Help
+
+        $capability.Version | Should Be '3.10.0'
+        $capability.TimelineCommand | Should Be 'csv-timeline'
+        $capability.UsesOutputType | Should Be $false
+    }
+
+    It 'assumes the current command set when the help text is unusable' {
+        # Ibis installs the latest release, so the newer layout is the safer guess.
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText 'nonsense'
+
+        $capability.TimelineCommand | Should Be 'dfir-timeline'
+        $capability.DetectionMethod | Should Match 'Assumed'
+    }
+
+    It 'builds Hayabusa 4 timeline arguments' {
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $v4Help
+
+        $csv = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'csv' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.csv') -join ' '
+        $csv | Should Be 'dfir-timeline -d D:\evtx -t csv --iso-8601 -o D:\out.csv -w -C'
+
+        $jsonl = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.jsonl') -join ' '
+        $jsonl | Should Be 'dfir-timeline -d D:\evtx -t jsonl -x -U -a -A -w -p super-verbose -o D:\out.jsonl -C'
+    }
+
+    It 'builds Hayabusa 3 timeline arguments' {
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $v3Help
+
+        $csv = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'csv' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.csv') -join ' '
+        $csv | Should Be 'csv-timeline -d D:\evtx --ISO-8601 -o D:\out.csv -w -C'
+
+        $jsonl = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.jsonl') -join ' '
+        $jsonl | Should Be 'json-timeline -d D:\evtx -x -U -a -A -w -p super-verbose -L -o D:\out.jsonl -C'
+    }
+
+    It 'always overwrites an existing timeline' {
+        # Without -C Hayabusa refuses to write, still exits 0, and leaves the old
+        # timeline in place, which Ibis would report as a successful run.
+        foreach ($helpText in @($v4Help, $v3Help)) {
+            $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $helpText
+            foreach ($format in @('csv', 'jsonl')) {
+                $arguments = Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format $format -SourceDirectory 'D:\evtx' -OutputPath 'D:\out'
+                ($arguments -contains '-C') | Should Be $true
+            }
+        }
+    }
+
+    It 'honours a custom output profile' {
+        $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $v4Help
+        $arguments = Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.jsonl' -OutputProfile 'verbose'
+
+        ($arguments -join ' ') | Should Match '-p verbose'
+    }
+
+    It 'no longer hard-codes a single timeline command' {
+        $moduleText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+        $start = $moduleText.IndexOf('function Invoke-IbisHayabusaEventLogs {')
+        $end = $moduleText.IndexOf('function ', $start + 40)
+        $moduleBody = $moduleText.Substring($start, $end - $start)
+
+        $moduleBody | Should Match 'Get-IbisHayabusaTimelineArgumentList'
+        $moduleBody | Should Not Match "'csv-timeline'"
+        $moduleBody | Should Not Match "'json-timeline'"
+    }
+}
+
+Describe 'Ibis processing module dispatch' {
+    $guiPath = Join-Path $projectRoot 'modules\Ibis.Gui.psm1'
+    $guiText = Get-Content -LiteralPath $guiPath -Raw
+
+    It 'calls each processing module from exactly one place' {
+        # The GUI once carried a second, unreachable dispatch chain behind a bare
+        # return. Editing it had no effect, which is a trap worth keeping shut.
+        $moduleFunctions = @(
+            'Invoke-IbisSystemSummary',
+            'Invoke-IbisVelociraptorResultsCopy',
+            'Invoke-IbisWindowsRegistryHives',
+            'Invoke-IbisAmcache',
+            'Invoke-IbisAppCompatCache',
+            'Invoke-IbisPrefetch',
+            'Invoke-IbisNtfsMetadata',
+            'Invoke-IbisSrum',
+            'Invoke-IbisUserArtifacts',
+            'Invoke-IbisEvtxECmdEventLogs',
+            'Invoke-IbisDuckDbEventLogSummary',
+            'Invoke-IbisHayabusaEventLogs',
+            'Invoke-IbisTakajoEventLogs',
+            'Invoke-IbisChainsawEventLogs',
+            'Invoke-IbisUserAccessLogsSum',
+            'Invoke-IbisBrowsingHistoryView',
+            'Invoke-IbisForensicWebHistory',
+            'Invoke-IbisParseUsbArtifacts'
+        )
+
+        $duplicated = @()
+        foreach ($moduleFunction in $moduleFunctions) {
+            $count = ([regex]::Matches($guiText, [regex]::Escape($moduleFunction))).Count
+            if ($count -ne 1) { $duplicated += ('{0} ({1})' -f $moduleFunction, $count) }
+        }
+
+        ($duplicated -join ', ') | Should Be ''
+    }
+
+    It 'has no statements stranded after a bare return' {
+        $guiText | Should Not Match '(?m)^\s+return\s*\r?\n\s*\r?\n\s+try \{'
+    }
+}
+
+Describe 'Ibis module failure summaries' {
+    It 'writes a failure summary when a module throws' {
+        $outputRoot = Join-Path $TestDrive 'failure-output'
+        New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+        $errorRecord = $null
+        try { throw 'MFTECmd could not read the volume.' } catch { $errorRecord = $_ }
+
+        $path = Write-IbisModuleFailureSummary -OutputRoot $outputRoot -ModuleId 'ntfs-metadata' -ModuleName 'NTFS metadata' -Hostname 'HOST1' -ErrorRecord $errorRecord -Context @{ SourceRoot = 'C:\Source' }
+
+        $path | Should Not BeNullOrEmpty
+        Test-Path -LiteralPath $path | Should Be $true
+        (Split-Path -Path $path -Leaf) | Should Be 'HOST1-ntfs-metadata-Failure.json'
+        (Split-Path -Path (Split-Path -Path $path -Parent) -Leaf) | Should Be '_Ibis-Failures'
+
+        $payload = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $payload.ModuleId | Should Be 'ntfs-metadata'
+        $payload.ModuleName | Should Be 'NTFS metadata'
+        $payload.Status | Should Be 'Failed'
+        $payload.Message | Should Match 'could not read the volume'
+        $payload.ScriptStackTrace | Should Not BeNullOrEmpty
+        $payload.Context.SourceRoot | Should Be 'C:\Source'
+    }
+
+    It 'falls back to the module id when no name is supplied' {
+        $outputRoot = Join-Path $TestDrive 'failure-noname'
+        New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+        $path = Write-IbisModuleFailureSummary -OutputRoot $outputRoot -ModuleId 'usb' -Message 'Staging failed.'
+        $payload = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+
+        $payload.ModuleName | Should Be 'usb'
+        $payload.Message | Should Be 'Staging failed.'
+        (Split-Path -Path $path -Leaf) | Should Be 'usb-Failure.json'
+    }
+
+    It 'records a message even when the error carried none' {
+        $outputRoot = Join-Path $TestDrive 'failure-blank'
+        New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+        $path = Write-IbisModuleFailureSummary -OutputRoot $outputRoot -ModuleId 'srum'
+        $payload = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+
+        $payload.Message | Should Be 'The module failed without reporting a message.'
+    }
+
+    It 'returns nothing rather than throwing when the output root is blank' {
+        # The recorder runs from inside a catch block, so it must never raise a
+        # second error and take down the rest of the module run.
+        Write-IbisModuleFailureSummary -OutputRoot '' -ModuleId 'srum' | Should BeNullOrEmpty
+    }
+
+    It 'places failures in a predictable folder beside the results' {
+        (Split-Path -Path (Get-IbisModuleFailureDirectory -OutputRoot 'C:\Export\HOST1') -Leaf) | Should Be '_Ibis-Failures'
+    }
+
+    It 'records a failure summary from the processing runspace' {
+        $guiText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Gui.psm1') -Raw
+        $guiText | Should Match 'Write-IbisModuleFailureSummary'
     }
 }
 

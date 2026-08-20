@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.3`.
+Current version: `v0.7.4`.
 
 ## Build From Scratch Shape
 
@@ -186,9 +186,16 @@ GUI behaviour:
 - Processing module checkboxes have hover hints from `config.json`.
 - DuckDB summaries depend on EvtxECmd.
 - Takajo depends on Hayabusa.
+- Hayabusa 4.0.0 replaced `csv-timeline` and `json-timeline` with `dfir-timeline -t csv|jsonl`. Ibis supports both eras: ask the installed executable with `Get-IbisHayabusaCapability`, then build arguments with `Get-IbisHayabusaTimelineArgumentList`. Never hard-code a timeline command.
+- Always pass `-C` to Hayabusa. Without it Hayabusa refuses to overwrite an existing timeline but still exits 0, so a re-run would silently keep stale output.
 - Disable relevant controls during background operations.
 - Provide progress, pause/resume, and cancel controls. Cancel must stop the tool that is running, not only skip the next module.
 - Confirm before closing the window while a background run, download, or rule update is active, then stop and dispose those runspaces.
+- When a processing module throws, record the failure on disk with `Write-IbisModuleFailureSummary` so the output folder shows every selected module, not only the ones that finished.
+- Processing modules are dispatched from one place only: the `switch` inside the processing runspace. Do not add a second dispatch path.
+- The Setup tab reads left to right as the order of work: the numbered machine-preparation groups on the left, tool management on the right. PowerShell readiness is first, because nothing else can run until Ibis itself is allowed to. Keep new setup controls in that order.
+- Give each setup step a status symbol with `Get-IbisSetupStepIndicator`: green tick for ready, amber warning for attention, red for blocked. Build symbols from code points, never as literal characters, because Windows PowerShell reads a script without a byte order mark as ANSI.
+- Warn before an action whose common failure mode is caused by a skipped setup step. Downloading tools without Defender exclusions is the worked example: `Get-IbisToolDownloadReadiness` decides, and the analyst can still continue.
 - Print a processing summary at the end of each run, especially highlighting failures and explaining skipped modules.
 - Notify at completion with a popup and optional beep.
 - Use the embedded base64 Ibis icon; no external icon file is required.
