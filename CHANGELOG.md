@@ -4,6 +4,19 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.3 - 2026-08-20
+
+- Cancelling a processing run now stops the external tool that is currently running instead of waiting for it to finish. Ibis stops the process and its children, records the reason in the captured stderr, and reports `Cancelled` on the tool result.
+- Added an optional `-TimeoutSeconds` to external tool capture, with process-tree termination when it is reached. The default remains no timeout, because forensic parsers can legitimately run for hours.
+- Closing the Ibis window while a processing run, tool download, or Hayabusa rule update is active now asks for confirmation, then requests cancellation and stops and disposes the background runspaces instead of ending them mid-write.
+- Removed a second, unreachable definition of `Resolve-IbisComparablePath`. Two copies with different behaviour existed and the later one silently won.
+- Defender exclusion checks no longer treat two blank paths as a match.
+- Fixed the Takajo `stack-users` failure. Takajo maps `-s` to `skipProgressBar` for every stack command except `stack-users`, where it means `sourceUsers`. Ibis was therefore leaving the progress bar enabled for that one command, which crashes with `Error: unhandled exception: The handle is invalid.` because Ibis redirects the console. Ibis now passes `--skipProgressBar` by its long name for `automagic` and every stack command, and asks for target users rather than source users.
+- Takajo now writes each operation's stderr to `EventLogs\Takajo\_Working\HOSTNAME-Takajo-<mode>.stderr.txt` when the tool says anything, and includes a short excerpt of the error in the summary JSON message.
+- Takajo failure and warning messages now name the summary JSON path and the operations that failed, instead of saying only "See summary JSON for details".
+- Clarified the Takajo warning text: it now says Takajo writes no CSV when nothing matched, rather than implying the output is missing.
+- Added regression coverage for timeout termination, analyst cancellation, cancellation checks that call back into the caller scope, single-definition path comparison, tool error excerpting, and the Takajo progress bar flag.
+
 ## v0.7.2 - 2026-08-20
 
 - Removed the ParseUSBs explicit hive pass. ParseUSBs 1.8 crashes in that mode with `NameError: name 'userfolders' is not defined`, even with the syntax from its own help text, so it could never produce output. The module now runs one staged volume-mode pass, which covers the same registry hives and adds USB event logs and user LNK files.

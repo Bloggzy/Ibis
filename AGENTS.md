@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.2`.
+Current version: `v0.7.3`.
 
 ## Build From Scratch Shape
 
@@ -187,7 +187,8 @@ GUI behaviour:
 - DuckDB summaries depend on EvtxECmd.
 - Takajo depends on Hayabusa.
 - Disable relevant controls during background operations.
-- Provide progress, pause/resume, and cancel-before-next-module controls.
+- Provide progress, pause/resume, and cancel controls. Cancel must stop the tool that is running, not only skip the next module.
+- Confirm before closing the window while a background run, download, or rule update is active, then stop and dispose those runspaces.
 - Print a processing summary at the end of each run, especially highlighting failures and explaining skipped modules.
 - Notify at completion with a popup and optional beep.
 - Use the embedded base64 Ibis icon; no external icon file is required.
@@ -225,7 +226,7 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - Event Logs: run EvtxECmd.
 - DuckDB Event Summaries: sub-module of EvtxECmd using editable SQL templates.
 - Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup tools.
-- Takajo: consume Hayabusa JSONL; run `automagic` and stack commands; back up output folder first.
+- Takajo: consume Hayabusa JSONL; run `automagic` and stack commands; back up output folder first; pass `--skipProgressBar` by long name, because `-s` means `sourceUsers` for `stack-users`; save any stderr under `_Working` and quote a short excerpt in the result message.
 - Chainsaw: process event logs and normalise staged output.
 - UAL/SUM: run SumECmd against `Windows\System32\LogFiles\Sum`; rename timestamped output.
 - Browser History: BrowsingHistoryView with offline `Users` folder; write results beneath `WebHistory\BrowsingHistoryView`.

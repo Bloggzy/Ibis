@@ -1,6 +1,6 @@
 ﻿{
     "name":  "Ibis",
-    "version":  "0.7.2",
+    "version":  "0.7.3",
     "defaultToolsRoot":  "C:\\DFIR\\Tools",
     "defaultSourceRoot":  "C:\\Source\\Evidence",
     "defaultOutputRoot":  "C:\\Export\\Output",

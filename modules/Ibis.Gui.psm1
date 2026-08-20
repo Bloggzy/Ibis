@@ -1377,6 +1377,9 @@ function Start-IbisProcessingRunspace {
             }
         }
 
+        # Let Ibis stop an external tool mid-run instead of only between modules.
+        Set-IbisProcessCancellationCheck -ScriptBlock { (Get-IbisProcessingControlState) -eq 'CancelRequested' }
+
         $currentOutputRoot = $OutputRoot
         $currentHostname = $Hostname
         $preserveBlankHostname = [string]::IsNullOrWhiteSpace($Hostname)
@@ -1456,6 +1459,8 @@ function Start-IbisProcessingRunspace {
                 OutputRoot = $currentOutputRoot
             }
         }
+
+        Clear-IbisProcessCancellationCheck
 
         if ((Get-IbisProcessingControlState) -eq 'CancelRequested') {
             Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId 'ibis' -ToolName 'Ibis' -Stage 'Cancelled' -Message 'Processing module run cancelled.' -Index $total -Total $total -Status 'Cancelled'
@@ -3345,7 +3350,7 @@ function Show-IbisGui {
         }
 
         $choice = [System.Windows.Forms.MessageBox]::Show(
-            "Ibis will cancel the processing run before the next module starts. A tool that is already running will be allowed to finish first.`r`n`r`nContinue?",
+            "Ibis will stop the tool that is running now, then cancel the processing run.`r`n`r`nPartial output from the stopped tool may be left in the output folder.`r`n`r`nContinue?",
             'Cancel Processing',
             'YesNo',
             'Warning'
@@ -3359,7 +3364,7 @@ function Show-IbisGui {
             $processingState.CancelRequested = $true
             $pauseProcessingButton.Enabled = $false
             $cancelProcessingButton.Enabled = $false
-            Add-IbisLogLine -LogTextBox $logTextBox -Message 'Processing cancel requested. The current module will finish, then Ibis will stop before the next module.'
+            Add-IbisLogLine -LogTextBox $logTextBox -Message 'Processing cancel requested. Ibis will stop the running tool and then end the run.'
             $statusLabel.Text = 'Processing cancel requested'
         }
         catch {
@@ -3895,6 +3900,52 @@ function Show-IbisGui {
     })
 
     $form.Add_FormClosing({
+        param($closingSender, $closingArgs)
+
+        # Closing the window ends the process, which would kill any background
+        # runspace mid-write and orphan the external tool it launched.
+        $busyDescriptions = @()
+        if ($processingState.Operation) { $busyDescriptions += 'a processing run' }
+        if ($downloadState.Operation) { $busyDescriptions += 'a tool download' }
+        if ($hayabusaRulesUpdateState.Operation) { $busyDescriptions += 'a Hayabusa rule update' }
+
+        if ($busyDescriptions.Count -gt 0) {
+            $busyText = $busyDescriptions -join ' and '
+            $choice = [System.Windows.Forms.MessageBox]::Show(
+                "Ibis is still running $busyText.`r`n`r`nClosing now stops that work immediately. Output may be incomplete and an external tool may be left running.`r`n`r`nClose Ibis anyway?",
+                'Ibis Is Still Working',
+                'YesNo',
+                'Warning'
+            )
+            if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+                if ($closingArgs) { $closingArgs.Cancel = $true }
+                return
+            }
+
+            Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Ibis GUI closed while $busyText was still running."
+
+            if ($processingState.Operation) {
+                try {
+                    Set-IbisProcessingControlState -ControlPath $processingState.ControlPath -State 'CancelRequested'
+                }
+                catch {
+                    Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Could not request processing cancellation during shutdown: $($_.Exception.Message)"
+                }
+            }
+
+            foreach ($runningState in @($processingState, $downloadState, $hayabusaRulesUpdateState)) {
+                if (-not $runningState.Operation) { continue }
+                try {
+                    $runningState.Operation.PowerShell.Stop()
+                    $runningState.Operation.PowerShell.Dispose()
+                }
+                catch {
+                    Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Could not stop a background operation during shutdown: $($_.Exception.Message)"
+                }
+                $runningState.Operation = $null
+            }
+        }
+
         & $saveConfigPaths -Reason 'GUI session closing'
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message 'Ibis GUI session closing.'
     })

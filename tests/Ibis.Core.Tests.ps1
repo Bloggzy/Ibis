@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.2'
+        $config.version | Should Be '0.7.3'
     }
 
     It 'records release history in the changelog' {
@@ -163,6 +163,22 @@ Describe 'Ibis core configuration' {
         ($summary -join "`n") | Should Match 'Skipped items:'
         ($summary -join "`n") | Should Match 'Tool srum-dependent-step: Skipped because the required SRUM input was unavailable'
         ($summary -join "`n") | Should Match 'Prefetch: Prefetch folder was not found'
+    }
+}
+
+Describe 'Ibis path comparison' {
+    It 'exposes exactly one path comparison implementation' {
+        $moduleText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+        ([regex]::Matches($moduleText, 'function Resolve-IbisComparablePath')).Count | Should Be 1
+    }
+
+    It 'returns nothing for a blank path' {
+        Resolve-IbisComparablePath -Path '' | Should BeNullOrEmpty
+        Resolve-IbisComparablePath -Path '   ' | Should BeNullOrEmpty
+    }
+
+    It 'compares paths that differ only by case or trailing separator' {
+        (Resolve-IbisComparablePath -Path 'C:\DFIR\Tools\') -eq (Resolve-IbisComparablePath -Path 'c:\dfir\tools') | Should Be $true
     }
 }
 
@@ -772,6 +788,126 @@ Describe 'Ibis command specs' {
         $result.ExitCode | Should Be 0
         $result.StandardOutput.Length -gt 100000 | Should Be $true
         $result.StandardError.Length -gt 100000 | Should Be $true
+    }
+}
+
+Describe 'Ibis tool error reporting' {
+    It 'returns nothing for empty stderr' {
+        Get-IbisToolErrorExcerpt -StandardError '' | Should Be ''
+        Get-IbisToolErrorExcerpt -StandardError $null | Should Be ''
+    }
+
+    It 'keeps the last meaningful lines rather than the banner' {
+        $stderr = "Started the command`n`nCounting lines`noserrors.nim(92) raiseOSError`nError: unhandled exception: The handle is invalid.`n [OSError]"
+        $excerpt = Get-IbisToolErrorExcerpt -StandardError $stderr
+
+        $excerpt | Should Match 'The handle is invalid'
+        $excerpt | Should Not Match 'Started the command'
+    }
+
+    It 'truncates a very long excerpt' {
+        $excerpt = Get-IbisToolErrorExcerpt -StandardError ('x' * 900) -MaximumLength 50
+        $excerpt.Length | Should Be 53
+        $excerpt | Should Match '\.\.\.$'
+    }
+
+    It 'writes tool stderr into the working directory' {
+        $workingDirectory = Join-Path $TestDrive 'takajo-working'
+        $result = [pscustomobject]@{ StandardError = 'Error: unhandled exception' }
+        $path = Save-IbisTakajoStandardError -WorkingDirectory $workingDirectory -Hostname 'HOST1' -Mode 'stack-users' -ProcessResult $result
+
+        $path | Should Not BeNullOrEmpty
+        Test-Path -LiteralPath $path | Should Be $true
+        (Split-Path -Path $path -Leaf) | Should Be 'HOST1-Takajo-stack-users.stderr.txt'
+        (Get-Content -LiteralPath $path -Raw) | Should Match 'unhandled exception'
+    }
+
+    It 'writes no stderr file when the tool was quiet' {
+        $workingDirectory = Join-Path $TestDrive 'takajo-quiet'
+        $result = [pscustomobject]@{ StandardError = '' }
+        $path = Save-IbisTakajoStandardError -WorkingDirectory $workingDirectory -Hostname 'HOST1' -Mode 'automagic' -ProcessResult $result
+
+        $path | Should BeNullOrEmpty
+        Test-Path -LiteralPath $workingDirectory | Should Be $false
+    }
+
+    It 'asks Takajo to skip the progress bar by long option name' {
+        # Takajo maps '-s' to skipProgressBar for most stack commands but to
+        # sourceUsers for stack-users, where the progress bar then crashes under a
+        # redirected console.
+        $moduleText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+        $takajoStart = $moduleText.IndexOf('function Invoke-IbisTakajoEventLogs {')
+        $takajoEnd = $moduleText.IndexOf('function ', $takajoStart + 40)
+        $takajoText = $moduleText.Substring($takajoStart, $takajoEnd - $takajoStart)
+
+        $takajoText | Should Match '--skipProgressBar'
+        $takajoText | Should Not Match ", '-s'"
+    }
+}
+
+Describe 'Ibis external process control' {
+    $powerShellPath = (Get-Process -Id $PID).Path
+    if ([string]::IsNullOrWhiteSpace($powerShellPath)) { $powerShellPath = 'powershell.exe' }
+
+    AfterEach {
+        Clear-IbisProcessCancellationCheck
+    }
+
+    It 'reports no cancellation when no check is registered' {
+        Clear-IbisProcessCancellationCheck
+        Test-IbisProcessCancellationRequested | Should Be $false
+    }
+
+    It 'uses a registered cancellation check' {
+        Set-IbisProcessCancellationCheck -ScriptBlock { $true }
+        Test-IbisProcessCancellationRequested | Should Be $true
+    }
+
+    It 'treats a broken cancellation check as no cancellation' {
+        Set-IbisProcessCancellationCheck -ScriptBlock { throw 'control file unreadable' }
+        Test-IbisProcessCancellationRequested | Should Be $false
+    }
+
+    It 'resolves a cancellation check that calls back into the caller scope' {
+        # The processing runspace registers a scriptblock that calls its own
+        # Get-IbisProcessingControlState. Ibis invokes it from inside the module,
+        # so the scriptblock must still resolve commands from where it was defined.
+        function Get-IbisTestControlStateProbe { 'CancelRequested' }
+        Set-IbisProcessCancellationCheck -ScriptBlock { (Get-IbisTestControlStateProbe) -eq 'CancelRequested' }
+
+        Test-IbisProcessCancellationRequested | Should Be $true
+    }
+
+    It 'stops a long running tool when the timeout is reached' {
+        $started = Get-Date
+        $result = Invoke-IbisProcessCapture -FilePath $powerShellPath -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 60') -TimeoutSeconds 2
+        $elapsed = ((Get-Date) - $started).TotalSeconds
+
+        $result.TimedOut | Should Be $true
+        $result.Cancelled | Should Be $false
+        $elapsed | Should BeLessThan 40
+        $result.StandardError | Should Match 'exceeded the configured timeout'
+    }
+
+    It 'stops a running tool when the analyst cancels the run' {
+        Set-IbisProcessCancellationCheck -ScriptBlock { $true }
+        $started = Get-Date
+        $result = Invoke-IbisProcessCapture -FilePath $powerShellPath -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 60')
+        $elapsed = ((Get-Date) - $started).TotalSeconds
+
+        $result.Cancelled | Should Be $true
+        $result.TimedOut | Should Be $false
+        $elapsed | Should BeLessThan 40
+        $result.StandardError | Should Match 'analyst cancelled the run'
+    }
+
+    It 'leaves a normally completing tool untouched' {
+        $result = Invoke-IbisProcessCapture -FilePath $powerShellPath -ArgumentList @('-NoProfile', '-Command', 'Write-Output ibis-ok') -TimeoutSeconds 120
+
+        $result.ExitCode | Should Be 0
+        $result.TimedOut | Should Be $false
+        $result.Cancelled | Should Be $false
+        $result.StandardOutput.Trim() | Should Be 'ibis-ok'
     }
 }
 

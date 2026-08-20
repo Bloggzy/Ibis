@@ -454,7 +454,13 @@ function Get-IbisDefenderExclusionStatus {
             $resolvedRecommendation = Resolve-IbisComparablePath -Path $recommendation.Path
             $present = $false
             foreach ($existingExclusion in $existingExclusions) {
-                if ((Resolve-IbisComparablePath -Path $existingExclusion) -eq $resolvedRecommendation) {
+                $resolvedExclusion = Resolve-IbisComparablePath -Path $existingExclusion
+                # Resolve-IbisComparablePath returns $null for a blank path, and
+                # $null -eq $null would otherwise report a false match.
+                if ([string]::IsNullOrWhiteSpace($resolvedExclusion) -or [string]::IsNullOrWhiteSpace($resolvedRecommendation)) {
+                    continue
+                }
+                if ($resolvedExclusion -eq $resolvedRecommendation) {
                     $present = $true
                     break
                 }
@@ -647,27 +653,6 @@ function Remove-IbisDefenderExclusion {
             }
         }
     }
-}
-
-function Resolve-IbisComparablePath {
-    [CmdletBinding()]
-    param(
-        [AllowEmptyString()]
-        [string]$Path
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return ''
-    }
-
-    try {
-        $fullPath = [System.IO.Path]::GetFullPath($Path)
-    }
-    catch {
-        $fullPath = $Path
-    }
-
-    $fullPath.TrimEnd([char[]]@('\', '/')).ToLowerInvariant()
 }
 
 function Invoke-IbisDownloadFile {
@@ -2750,6 +2735,80 @@ function Invoke-IbisPrepareRegistryHives {
     }
 }
 
+function Set-IbisProcessCancellationCheck {
+    [CmdletBinding()]
+    param(
+        [scriptblock]$ScriptBlock
+    )
+
+    # Lets a caller (normally the processing runspace) tell Ibis how to ask
+    # whether the analyst has requested cancellation, without threading a
+    # parameter through every processing module signature.
+    $script:IbisProcessCancellationCheck = $ScriptBlock
+}
+
+function Clear-IbisProcessCancellationCheck {
+    [CmdletBinding()]
+    param()
+
+    $script:IbisProcessCancellationCheck = $null
+}
+
+function Test-IbisProcessCancellationRequested {
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq $script:IbisProcessCancellationCheck) {
+        return $false
+    }
+
+    try {
+        [bool](& $script:IbisProcessCancellationCheck)
+    }
+    catch {
+        # A broken cancellation check must never stop processing.
+        $false
+    }
+}
+
+function Stop-IbisProcessTree {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    # taskkill /T also stops child processes, which matters because several
+    # DFIR tools launch helpers of their own.
+    try {
+        $arguments = @('/PID', $ProcessId.ToString(), '/T', '/F')
+        $killer = [System.Diagnostics.Process]::Start((New-Object System.Diagnostics.ProcessStartInfo -Property @{
+            FileName = 'taskkill.exe'
+            Arguments = ($arguments -join ' ')
+            UseShellExecute = $false
+            CreateNoWindow = $true
+            RedirectStandardOutput = $true
+            RedirectStandardError = $true
+        }))
+        if ($null -ne $killer) {
+            [void]$killer.WaitForExit(10000)
+            $killer.Dispose()
+            return $true
+        }
+    }
+    catch {
+    }
+
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $process.Kill()
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
 function Invoke-IbisProcessCapture {
     [CmdletBinding()]
     param(
@@ -2758,7 +2817,11 @@ function Invoke-IbisProcessCapture {
 
         [string[]]$ArgumentList = @(),
 
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+
+        # 0 means wait indefinitely.  Forensic parsers can legitimately run for
+        # hours, so Ibis does not impose a default deadline on evidence work.
+        [int]$TimeoutSeconds = 0
     )
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -2790,21 +2853,50 @@ function Invoke-IbisProcessCapture {
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
+    $timedOut = $false
+    $cancelled = $false
+    $stopped = $false
     try {
         [void]$process.Start()
+        $processId = $process.Id
+
+        # Drain both pipes concurrently so a noisy tool cannot fill one and block.
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
-        $stdoutTask.Wait()
-        $stderrTask.Wait()
-        $stdout = $stdoutTask.Result
-        $stderr = $stderrTask.Result
-        $exitCode = $process.ExitCode
+
+        $started = [DateTime]::UtcNow
+        while (-not $process.WaitForExit(500)) {
+            if ($TimeoutSeconds -gt 0 -and ([DateTime]::UtcNow - $started).TotalSeconds -ge $TimeoutSeconds) {
+                $timedOut = $true
+            }
+            elseif (Test-IbisProcessCancellationRequested) {
+                $cancelled = $true
+            }
+
+            if ($timedOut -or $cancelled) {
+                $stopped = Stop-IbisProcessTree -ProcessId $processId
+                [void]$process.WaitForExit(30000)
+                break
+            }
+        }
+
+        $stdoutTask.Wait(30000) | Out-Null
+        $stderrTask.Wait(30000) | Out-Null
+        $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
+        $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
+        $exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
     }
     finally {
         if ($null -ne $process) {
             $process.Dispose()
         }
+    }
+
+    if ($timedOut) {
+        $stderr = (("Ibis stopped this tool after {0} second(s) because it exceeded the configured timeout." -f $TimeoutSeconds), $stderr) -join [Environment]::NewLine
+    }
+    elseif ($cancelled) {
+        $stderr = ('Ibis stopped this tool because the analyst cancelled the run.', $stderr) -join [Environment]::NewLine
     }
 
     [pscustomobject]@{
@@ -2815,6 +2907,9 @@ function Invoke-IbisProcessCapture {
         ExitCode = $exitCode
         StandardOutput = $stdout
         StandardError = $stderr
+        TimedOut = $timedOut
+        Cancelled = $cancelled
+        Stopped = $stopped
     }
 }
 
@@ -5714,6 +5809,68 @@ function Get-IbisHayabusaJsonlPath {
     Join-Path (Get-IbisEventLogToolOutputDirectory -OutputRoot $OutputRoot -Hostname $safeHost -ToolFolder 'Hayabusa') (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-EventLogs-SuperVerbose.jsonl')
 }
 
+function Save-IbisTakajoStandardError {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory,
+
+        [string]$Hostname = '',
+
+        [Parameter(Mandatory = $true)]
+        [string]$Mode,
+
+        $ProcessResult
+    )
+
+    # Only keep stderr that says something, so a clean run does not leave an empty
+    # _Working folder beside the results.
+    if ($null -eq $ProcessResult -or [string]::IsNullOrWhiteSpace($ProcessResult.StandardError)) {
+        return $null
+    }
+
+    try {
+        if (-not (Test-Path -LiteralPath $WorkingDirectory)) {
+            New-Item -ItemType Directory -Path $WorkingDirectory -Force | Out-Null
+        }
+        $fileName = New-IbisHostPrefixedFileName -Hostname $Hostname -Suffix ('Takajo-{0}.stderr.txt' -f $Mode)
+        $path = Join-Path $WorkingDirectory $fileName
+        $ProcessResult.StandardError | Out-File -LiteralPath $path -Encoding UTF8
+        return $path
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-IbisToolErrorExcerpt {
+    [CmdletBinding()]
+    param(
+        [string]$StandardError,
+
+        [int]$MaximumLength = 300
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StandardError)) {
+        return ''
+    }
+
+    # Console tools often print a banner before the real error, so keep the last
+    # few meaningful lines rather than the first.
+    $lines = @($StandardError -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    if ($lines.Count -eq 0) {
+        return ''
+    }
+
+    $selected = if ($lines.Count -gt 3) { $lines[-3..-1] } else { $lines }
+    $excerpt = ($selected -join ' ')
+    if ($excerpt.Length -gt $MaximumLength) {
+        $excerpt = $excerpt.Substring(0, $MaximumLength) + '...'
+    }
+
+    $excerpt
+}
+
 function Invoke-IbisTakajoEventLogs {
     [CmdletBinding()]
     param(
@@ -5772,13 +5929,19 @@ function Invoke-IbisTakajoEventLogs {
         }
         else {
             $takajoBackup = if ($hasExistingTakajoOutput) { Move-IbisExistingDirectoryToBackup -DirectoryPath $takajoOutputDirectory -BackupRoot (Join-Path $temporaryWorkingsDirectory 'Takajo-Backups') } else { $null }
-            $takajoResult = Invoke-IbisProcessCapture -FilePath $takajoPath -ArgumentList @('automagic', '-t', $hayabusaJsonlPath, '-o', $takajoOutputDirectory, '-s') -WorkingDirectory (Split-Path -Path $takajoPath -Parent)
+            $takajoResult = Invoke-IbisProcessCapture -FilePath $takajoPath -ArgumentList @('automagic', '-t', $hayabusaJsonlPath, '-o', $takajoOutputDirectory, '--skipProgressBar') -WorkingDirectory (Split-Path -Path $takajoPath -Parent)
             $takajoStatus = 'Completed'
             $takajoMessage = 'Takajo automagic completed.'
-            if ($takajoResult.ExitCode -ne 0) { $takajoStatus = 'Failed'; $takajoMessage = "Takajo automagic exited with code $($takajoResult.ExitCode)." }
+            $takajoErrorPath = Save-IbisTakajoStandardError -WorkingDirectory $temporaryWorkingsDirectory -Hostname $safeHost -Mode 'automagic' -ProcessResult $takajoResult
+            if ($takajoResult.ExitCode -ne 0) {
+                $takajoStatus = 'Failed'
+                $takajoMessage = "Takajo automagic exited with code $($takajoResult.ExitCode)."
+                $takajoExcerpt = Get-IbisToolErrorExcerpt -StandardError $takajoResult.StandardError
+                if ($takajoExcerpt) { $takajoMessage = "$takajoMessage Takajo reported: $takajoExcerpt" }
+            }
             elseif (-not (Test-Path -LiteralPath $takajoOutputDirectory -PathType Container)) { $takajoStatus = 'Completed With Warnings'; $takajoMessage = 'Takajo automagic completed, but the output folder was not found.' }
             $renamedAutomagicOutputs = @(Rename-IbisToolOutputFiles -SourceDirectory $takajoOutputDirectory -OutputDirectory $takajoOutputDirectory -Hostname $safeHost -ToolName 'Takajo')
-            $automagicToolResult = [pscustomobject]@{ ToolId = $takajo.id; Mode = 'automagic'; OutputPath = $takajoOutputDirectory; BackupPath = $takajoBackup; RenamedOutputs = $renamedAutomagicOutputs; Status = $takajoStatus; ExitCode = $takajoResult.ExitCode; CommandLine = $takajoResult.CommandLine; Message = $takajoMessage }
+            $automagicToolResult = [pscustomobject]@{ ToolId = $takajo.id; Mode = 'automagic'; OutputPath = $takajoOutputDirectory; BackupPath = $takajoBackup; RenamedOutputs = $renamedAutomagicOutputs; Status = $takajoStatus; ExitCode = $takajoResult.ExitCode; CommandLine = $takajoResult.CommandLine; StandardErrorPath = $takajoErrorPath; Message = $takajoMessage }
             $toolResults += $automagicToolResult
 
             if (-not (Test-Path -LiteralPath $takajoOutputDirectory)) { New-Item -ItemType Directory -Path $takajoOutputDirectory -Force | Out-Null }
@@ -5795,12 +5958,21 @@ function Invoke-IbisTakajoEventLogs {
             )
             foreach ($stackCommand in $stackCommands) {
                 $stackOutputPath = Join-Path $takajoOutputDirectory (Format-IbisHostPrefixedValue -Hostname $safeHost -Format 'Takajo-{0}.csv' -ArgumentList @($stackCommand))
-                $stackResult = Invoke-IbisProcessCapture -FilePath $takajoPath -ArgumentList @($stackCommand, '-t', $hayabusaJsonlPath, '-o', $stackOutputPath, '-s', '-q') -WorkingDirectory (Split-Path -Path $takajoPath -Parent)
+                # Use the long option name. '-s' is 'skipProgressBar' for most Takajo stack
+                # commands but 'sourceUsers' for stack-users, so '-s' left the progress bar
+                # on there, which crashes because Ibis redirects the console.
+                $stackResult = Invoke-IbisProcessCapture -FilePath $takajoPath -ArgumentList @($stackCommand, '-t', $hayabusaJsonlPath, '-o', $stackOutputPath, '--skipProgressBar', '-q') -WorkingDirectory (Split-Path -Path $takajoPath -Parent)
                 $stackStatus = 'Completed'
                 $stackMessage = "$stackCommand completed."
-                if ($stackResult.ExitCode -ne 0) { $stackStatus = 'Failed'; $stackMessage = "$stackCommand exited with code $($stackResult.ExitCode)." }
-                elseif (-not (Test-Path -LiteralPath $stackOutputPath -PathType Leaf)) { $stackStatus = 'Completed With Warnings'; $stackMessage = "$stackCommand completed, but the expected CSV was not found." }
-                $toolResults += [pscustomobject]@{ ToolId = $takajo.id; Mode = $stackCommand; OutputPath = $stackOutputPath; Status = $stackStatus; ExitCode = $stackResult.ExitCode; CommandLine = $stackResult.CommandLine; Message = $stackMessage }
+                $stackErrorPath = Save-IbisTakajoStandardError -WorkingDirectory $temporaryWorkingsDirectory -Hostname $safeHost -Mode $stackCommand -ProcessResult $stackResult
+                if ($stackResult.ExitCode -ne 0) {
+                    $stackStatus = 'Failed'
+                    $stackMessage = "$stackCommand exited with code $($stackResult.ExitCode)."
+                    $stackExcerpt = Get-IbisToolErrorExcerpt -StandardError $stackResult.StandardError
+                    if ($stackExcerpt) { $stackMessage = "$stackMessage Takajo reported: $stackExcerpt" }
+                }
+                elseif (-not (Test-Path -LiteralPath $stackOutputPath -PathType Leaf)) { $stackStatus = 'Completed With Warnings'; $stackMessage = "$stackCommand completed, but the expected CSV was not found. Takajo writes no CSV when nothing matched." }
+                $toolResults += [pscustomobject]@{ ToolId = $takajo.id; Mode = $stackCommand; OutputPath = $stackOutputPath; Status = $stackStatus; ExitCode = $stackResult.ExitCode; CommandLine = $stackResult.CommandLine; StandardErrorPath = $stackErrorPath; Message = $stackMessage }
             }
             $renamedFinalOutputs = @(Rename-IbisToolOutputFiles -SourceDirectory $takajoOutputDirectory -OutputDirectory $takajoOutputDirectory -Hostname $safeHost -ToolName 'Takajo')
             $automagicToolResult.RenamedOutputs = @($automagicToolResult.RenamedOutputs) + $renamedFinalOutputs
@@ -5866,8 +6038,12 @@ function Invoke-IbisTakajoEventLogs {
     $warnings = @($toolResults | Where-Object { $_.Status -match 'Warnings' })
     $status = 'Completed'
     $message = 'Takajo processing completed.'
-    if ($failed.Count -gt 0) { $status = 'Failed'; $message = "$($failed.Count) Takajo operation(s) failed. See summary JSON for details." }
-    elseif ($warnings.Count -gt 0) { $status = 'Completed With Warnings'; $message = "Takajo processing completed with $($warnings.Count) warning(s). See summary JSON for details." }
+    if ($failed.Count -gt 0) {
+        $status = 'Failed'
+        $failedModes = @($failed | ForEach-Object { $_.Mode }) -join ', '
+        $message = "$($failed.Count) Takajo operation(s) failed ($failedModes). See $summaryPath for details."
+    }
+    elseif ($warnings.Count -gt 0) { $status = 'Completed With Warnings'; $message = "Takajo processing completed with $($warnings.Count) warning(s). See $summaryPath for details." }
 
     [pscustomobject]@{
         ModuleId = 'takajo'
@@ -7035,6 +7211,10 @@ Export-ModuleMember -Function Get-IbisCachedRegistryHivePreparation
 Export-ModuleMember -Function Invoke-IbisPrepareRegistryHiveFile
 Export-ModuleMember -Function Invoke-IbisPrepareRegistryHive
 Export-ModuleMember -Function Invoke-IbisPrepareRegistryHives
+Export-ModuleMember -Function Set-IbisProcessCancellationCheck
+Export-ModuleMember -Function Clear-IbisProcessCancellationCheck
+Export-ModuleMember -Function Test-IbisProcessCancellationRequested
+Export-ModuleMember -Function Stop-IbisProcessTree
 Export-ModuleMember -Function Invoke-IbisProcessCapture
 Export-ModuleMember -Function Invoke-IbisRegRipperPlugin
 Export-ModuleMember -Function Invoke-IbisRegRipperHiveMode
@@ -7072,6 +7252,8 @@ Export-ModuleMember -Function Invoke-IbisDuckDbEventLogSummary
 Export-ModuleMember -Function Move-IbisExistingDirectoryToBackup
 Export-ModuleMember -Function Invoke-IbisHayabusaEventLogs
 Export-ModuleMember -Function Get-IbisHayabusaJsonlPath
+Export-ModuleMember -Function Save-IbisTakajoStandardError
+Export-ModuleMember -Function Get-IbisToolErrorExcerpt
 Export-ModuleMember -Function Invoke-IbisTakajoEventLogs
 Export-ModuleMember -Function Rename-IbisToolOutputFiles
 Export-ModuleMember -Function Rename-IbisChainsawOutput

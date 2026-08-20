@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.2`
+Current version: `v0.7.3`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -96,12 +96,14 @@ Typical workflow:
 
 - `Info`: overview, disclaimer, licence note, and Ibis logo.
 - `Setup tools`: tools folder, PowerShell readiness checks, tool checks, downloads, install assessments, selected-tool reinstall, guidance, Hayabusa rule updates, Defender exclusions, Visual C++ Redistributable status, and Windows long path support controls.
-- `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel-before-next-module.
+- `Run tools`: source selection, output selection, hostname, module selection, progress, pause/resume, and cancel.
 - `Settings`: completion notification settings, including the optional audible beep.
 - `Logs`: current session log location with buttons to open the log file or logs folder.
 - `About`: current version and changelog.
 
 The GUI keeps tool downloads, Hayabusa rule updates, and processing runs in background runspaces so the form remains responsive. Processing progress is reported through status text, progress bar updates, and a scrolling run log.
+
+Cancelling a run stops the external tool that is running at the time, then ends the run. Partial output from a stopped tool may remain in the output folder, and the stop is recorded in the log and in the tool stderr capture. Closing the Ibis window while a run, download, or rule update is still going asks for confirmation first, because closing ends the background work immediately.
 
 ## Evidence Sources
 
@@ -226,6 +228,10 @@ Runs Hayabusa against Windows event logs and produces a super-verbose JSONL time
 
 Consumes Hayabusa JSONL output. Takajo is disabled unless Hayabusa is selected. Ibis runs `automagic` plus explicit stack commands and backs up any existing Takajo output folder first because Takajo will not write into an existing output directory. Its summary is kept with the Takajo results; an empty temporary workspace is removed after processing.
 
+Ibis passes `--skipProgressBar` by its long option name. Takajo maps the short `-s` to `skipProgressBar` for most commands but to `sourceUsers` for `stack-users`, and a progress bar crashes Takajo when Ibis redirects the console.
+
+A stack command that finds nothing writes no CSV. Ibis records that as a warning, not a failure. When Takajo writes anything to stderr, Ibis saves it to `EventLogs\Takajo\_Working\HOSTNAME-Takajo-<mode>.stderr.txt` and puts a short excerpt in the summary JSON.
+
 ### Chainsaw
 
 Runs Chainsaw against Windows event logs using bundled rule content. Outputs are staged and normalised to hostname-based event log files.
@@ -338,7 +344,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.2`, both test runs pass with `146` tests.
+As of `v0.7.3`, both test runs pass with `162` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 
