@@ -4,7 +4,7 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
-## v0.7.1 - 2026-07-25
+## v0.7.1 - 2026-08-20
 
 - Stage ParseUSBs registry configuration files and transaction logs beneath the module working directory before the tool runs, ensuring any transaction replay remains isolated from source evidence.
 - Clear the read-only attribute on Ibis working copies of evidence files so registry transaction replay by `rla` and ParseUSBs can write to the cached copy. Source evidence keeps its original attributes and is never written to.
