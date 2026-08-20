@@ -357,6 +357,11 @@ As of `v0.7.4`, both test runs pass with `195` tests.
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .	ests\manual\Verify-ParseUsbContainment.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\manual\Verify-ParseUsbContainment.ps1
 ```
 
+## Support
+
+Ibis is free and Apache-2.0 licensed. If it saves you time on a case, you can [buy me a coffee](https://buymeacoffee.com/bloggz). There is also a Sponsor button at the top of the repository page.
+
+Support is optional and buys no priority, no support obligation, and no influence over what Ibis does.
