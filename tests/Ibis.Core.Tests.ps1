@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.1'
+        $config.version | Should Be '0.7.2'
     }
 
     It 'records release history in the changelog' {
@@ -1059,46 +1059,114 @@ Describe 'Ibis Windows Registry hives' {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
-    It 'builds separate ParseUSBs registry and volume argument lists from staged evidence' {
+    It 'builds a volume-mode ParseUSBs argument list from staged evidence' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $stageRoot = Join-Path $tempRoot 'Staging'
         $configRoot = Join-Path $stageRoot 'Windows\System32\config'
-        $userRoot = Join-Path $stageRoot 'Users\Analyst'
         $outputRoot = Join-Path $tempRoot 'Output'
-        New-Item -ItemType Directory -Path $configRoot, $userRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path $configRoot -Force | Out-Null
         'system' | Out-File -LiteralPath (Join-Path $configRoot 'SYSTEM') -Encoding ASCII
         'software' | Out-File -LiteralPath (Join-Path $configRoot 'SOFTWARE') -Encoding ASCII
-        'user' | Out-File -LiteralPath (Join-Path $userRoot 'NTUSER.dat') -Encoding ASCII
         try {
-            $staging = [pscustomobject]@{ StagingDirectory = $stageRoot; SystemHivePath = (Join-Path $configRoot 'SYSTEM'); SoftwareHivePath = (Join-Path $configRoot 'SOFTWARE'); UserHives = @([pscustomobject]@{ HivePath = (Join-Path $userRoot 'NTUSER.dat'); IsDefaultProfile = $false }) }
-            $registryArguments = @(Get-IbisParseUsbArgumentList -Phase RegistryHives -Staging $staging -OutputDirectory $outputRoot)
-            $volumeArguments = @(Get-IbisParseUsbArgumentList -Phase VolumeEnrichment -Staging $staging -OutputDirectory $outputRoot)
+            $staging = [pscustomobject]@{ StagingDirectory = $stageRoot; SystemHivePath = (Join-Path $configRoot 'SYSTEM'); SoftwareHivePath = (Join-Path $configRoot 'SOFTWARE') }
+            $arguments = @(Get-IbisParseUsbArgumentList -Staging $staging -OutputDirectory $outputRoot)
 
-            ($registryArguments -join ' ') | Should Match '(^| )-s( |$)'
-            ($registryArguments -join ' ') | Should Match '(^| )-w( |$)'
-            ($registryArguments -join ' ') | Should Match '(^| )-u( |$)'
-            ($registryArguments -join ' ') | Should Not Match '(^| )-v( |$)'
-            $volumeArguments[0] | Should Be '-v'
-            ($volumeArguments -join ' ') | Should Not Match '(^| )-u( |$)'
+            # Explicit hive mode is not used: ParseUSBs 1.8 crashes in that mode.
+            $arguments[0] | Should Be '-v'
+            $arguments[1] | Should Be $stageRoot
+            ($arguments -join ' ') | Should Not Match '(^| )-s( |$)'
+            ($arguments -join ' ') | Should Not Match '(^| )-u( |$)'
+            ($arguments -join ' ') | Should Match '(^| )-o csv( |$)'
         }
         finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
     }
 
-    It 'keeps ParseUSBs phase outputs distinct and hostname-prefixed' {
+    It 'fails argument construction when the staged SYSTEM hive is absent' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $stageRoot = Join-Path $tempRoot 'Staging'
+        New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+        try {
+            $staging = [pscustomobject]@{ StagingDirectory = $stageRoot; SystemHivePath = (Join-Path $stageRoot 'SYSTEM') }
+
+            # Pester 3 'Should Throw' does not work under PowerShell 7, so catch it here.
+            $thrownMessage = $null
+            try { Get-IbisParseUsbArgumentList -Staging $staging -OutputDirectory (Join-Path $tempRoot 'Output') }
+            catch { $thrownMessage = $_.Exception.Message }
+
+            $thrownMessage | Should Be 'The staged SYSTEM hive was not found.'
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
+    It 'publishes ParseUSBs output with a hostname prefix' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $stagingRoot = Join-Path $tempRoot 'Staging'
         $outputRoot = Join-Path $tempRoot 'Output'
         New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
         'header,value' | Out-File -LiteralPath (Join-Path $stagingRoot 'usb-info.csv') -Encoding ASCII
         try {
-            $moved = @(Move-IbisParseUsbOutput -StagingDirectory $stagingRoot -OutputDirectory $outputRoot -Hostname 'TESTHOST' -Phase RegistryHives)
+            $moved = @(Move-IbisParseUsbOutput -StagingDirectory $stagingRoot -OutputDirectory $outputRoot -Hostname 'TESTHOST')
 
             $moved.Count | Should Be 1
-            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST-ParseUSBs-RegistryHives-usb-info.csv') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $outputRoot 'TESTHOST-ParseUSBs-usb-info.csv') | Should Be $true
         }
         finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
     }
 
+    It 'stages Velociraptor percent-encoded USB event logs under their canonical name' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $hiveRoot = Join-Path $sourceRoot 'Windows\System32\config'
+        $eventLogRoot = Join-Path $sourceRoot 'Windows\System32\winevt\Logs'
+        $stagingRoot = Join-Path $tempRoot 'Staging'
+
+        New-Item -ItemType Directory -Path $hiveRoot, $eventLogRoot -Force | Out-Null
+        'system' | Out-File -LiteralPath (Join-Path $hiveRoot 'SYSTEM') -Encoding ASCII
+
+        # Velociraptor escapes the '%' in the channel name, so %4 is collected as %254.
+        'partition' | Out-File -LiteralPath (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%254Diagnostic.evtx') -Encoding ASCII
+        'storsvc' | Out-File -LiteralPath (Join-Path $eventLogRoot 'Microsoft-Windows-Storsvc%4Diagnostic.evtx') -Encoding ASCII
+
+        try {
+            $result = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $sourceRoot -StagingDirectory $stagingRoot
+            $stagedLogRoot = Join-Path $stagingRoot 'Windows\System32\winevt\Logs'
+
+            $result.EventLogCount | Should Be 2
+            Test-Path -LiteralPath (Join-Path $stagedLogRoot 'Microsoft-Windows-Partition%4Diagnostic.evtx') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $stagedLogRoot 'Microsoft-Windows-Storsvc%4Diagnostic.evtx') | Should Be $true
+
+            $partition = @($result.EventLogs | Where-Object { $_.Name -eq 'Microsoft-Windows-Partition%4Diagnostic.evtx' })[0]
+            $partition.SourceName | Should Be 'Microsoft-Windows-Partition%254Diagnostic.evtx'
+            $partition.DiscoveryMethod | Should Be 'Velociraptor encoded name'
+
+            $storsvc = @($result.EventLogs | Where-Object { $_.Name -eq 'Microsoft-Windows-Storsvc%4Diagnostic.evtx' })[0]
+            $storsvc.DiscoveryMethod | Should Be 'Canonical name'
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
+
+    It 'prefers the canonical USB event log name over the encoded form' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $eventLogRoot = Join-Path $tempRoot 'Logs'
+        New-Item -ItemType Directory -Path $eventLogRoot -Force | Out-Null
+        'canonical' | Out-File -LiteralPath (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%4Diagnostic.evtx') -Encoding ASCII
+        'encoded' | Out-File -LiteralPath (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%254Diagnostic.evtx') -Encoding ASCII
+        try {
+            $candidate = Find-IbisUsbEventLogCandidate -EventLogDirectory $eventLogRoot -CanonicalName 'Microsoft-Windows-Partition%4Diagnostic.evtx'
+
+            $candidate.SourceName | Should Be 'Microsoft-Windows-Partition%4Diagnostic.evtx'
+            $candidate.DiscoveryMethod | Should Be 'Canonical name'
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
+
+    It 'returns nothing when no USB event log candidate exists' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            Find-IbisUsbEventLogCandidate -EventLogDirectory $tempRoot -CanonicalName 'Microsoft-Windows-Storsvc%4Diagnostic.evtx' | Should BeNullOrEmpty
+        }
+        finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    }
     It 'caches prepared hive metadata and reuses it on repeated preparation' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
         $sourceRoot = Join-Path $tempRoot 'Evidence'

@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.1`.
+Current version: `v0.7.2`.
 
 ## Build From Scratch Shape
 
@@ -230,7 +230,7 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - UAL/SUM: run SumECmd against `Windows\System32\LogFiles\Sum`; rename timestamped output.
 - Browser History: BrowsingHistoryView with offline `Users` folder; write results beneath `WebHistory\BrowsingHistoryView`.
 - Forensic Webhistory: run with `--date-format iso`; write results beneath `WebHistory\ForensicWebHistory`.
-- ParseUSBs: stage system hives and transaction logs, per-user `NTUSER.dat` hives and logs, user LNK files, and supported USB event logs under `USB\_Working`; run explicit staged registry arguments for attribution plus a separate staged volume-mode enrichment pass; capture per-phase stdout/stderr and keep their outputs distinct.
+- ParseUSBs: stage system hives and transaction logs, per-user `NTUSER.dat` hives and logs, user LNK files, and supported USB event logs under `USB\_Working`; clear read-only attributes on the staged copies; accept Velociraptor percent-encoded event log names and stage them under the canonical Windows name; run one staged volume-mode pass only, because explicit hive mode crashes in ParseUSBs 1.8; treat "no USB device connections found" as a completed result rather than a failure.
 
 ## Versioning
 

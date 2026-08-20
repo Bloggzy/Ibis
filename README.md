@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.1`
+Current version: `v0.7.2`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -165,8 +165,8 @@ Examples:
 - `WebHistory\BrowsingHistoryView\HOSTNAME-BrowsingHistoryView-All-Users.csv`
 - `WebHistory\ForensicWebHistory\HOSTNAME-ForensicWebHistory-results.csv`
 - `HOSTNAME-MFTECmd-MFT-Output.csv`
-- `USB\_Working\HOSTNAME-ParseUSBs-RegistryHives-Log.txt`
-- `USB\_Working\HOSTNAME-ParseUSBs-VolumeEnrichment-Log.txt`
+- `USB\HOSTNAME-ParseUSBs-usb-info.csv`
+- `USB\_Working\HOSTNAME-ParseUSBs-Log.txt`
 
 Intermediate files, rendered SQL, stderr captures, copied hives, and helper outputs are stored under `_Working` folders where practical. Empty Takajo workspaces are removed after processing.
 
@@ -244,7 +244,13 @@ Runs `forensic-webhistory scan -d <source> -o <output> --date-format iso` to pro
 
 ### ParseUSBs
 
-Runs parseusbs to extract USB artefact information without writing to the evidence source. Ibis creates a selective, volume-shaped copy in `USB\_Working\ParseUSBs-Evidence-Staging`: system hives and transaction logs, each available `NTUSER.dat` and its logs, user LNK files, and the two USB-relevant event logs when present. It first runs explicit staged `SYSTEM`, `SOFTWARE`, and per-user `NTUSER.dat` arguments for reliable registry and MountPoints2 attribution, then runs staged volume mode for event-log and LNK enrichment. The two result sets are kept separate with `ParseUSBs-RegistryHives-...` and `ParseUSBs-VolumeEnrichment-...` filenames, with per-phase stdout/stderr and provenance in the USB summary JSON. This keeps any transaction replay or hive updates away from source evidence. The module is labelled `ParseUSBs` in the GUI.
+Runs parseusbs to extract USB artefact information without writing to the evidence source. Ibis creates a selective, volume-shaped copy in `USB\_Working\ParseUSBs-Evidence-Staging`: system hives and transaction logs, each available `NTUSER.dat` and its logs, user LNK files, and the two USB-relevant event logs when present. Read-only attributes are cleared on the copies so the tool can replay transactions there instead of failing. parseusbs then runs once, in volume mode, against that staging directory. Any hive replay, permission change, or `.restored` file it produces stays in the staging area and the source evidence is unchanged.
+
+Velociraptor percent-encodes the `%` in event log channel names, so `Microsoft-Windows-Partition%4Diagnostic.evtx` is collected as `Microsoft-Windows-Partition%254Diagnostic.evtx`. Ibis accepts either form and stages it under the canonical Windows name, because parseusbs looks for that exact name. The selected name and discovery method are recorded in the USB summary JSON.
+
+Ibis does not use parseusbs explicit hive mode (`-s` / `-w` / `-u`). Version 1.8 crashes in that mode with `NameError: name 'userfolders' is not defined`, even when given the syntax from its own help text, so it can produce no output. Volume mode covers the same registry hives and adds the USB event logs and user LNK files.
+
+When parseusbs finds no USB device connections it writes no CSV. Ibis reports that as a completed result with an explicit "no USB device connections were observed" message, not as a failure. The module is labelled `ParseUSBs` in the GUI.
 
 ## Tool Management
 
@@ -332,7 +338,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.1`, both test runs pass with `142` tests.
+As of `v0.7.2`, both test runs pass with `146` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 

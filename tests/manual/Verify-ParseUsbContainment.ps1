@@ -87,7 +87,9 @@ try {
     New-EvidenceFile (Join-Path $profileRoot 'AppData\Roaming\Microsoft\Windows\Recent\usb-device.lnk') 'LNK body'
 
     $eventLogRoot = Join-Path $sourceRoot 'Windows\System32\winevt\Logs'
-    New-EvidenceFile (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%4Diagnostic.evtx') 'partition diagnostic'
+    # Velociraptor escapes the '%', so the collected name is %254 not %4.
+    New-EvidenceFile (Join-Path $eventLogRoot 'Microsoft-Windows-Partition%254Diagnostic.evtx') 'partition diagnostic'
+    New-EvidenceFile (Join-Path $eventLogRoot 'Microsoft-Windows-Storsvc%4Diagnostic.evtx') 'storsvc diagnostic'
     New-EvidenceFile (Join-Path $eventLogRoot 'Security.evtx') 'security log that ParseUSBs does not need'
 
     # Make the source tree read-only, the way a mounted image behaves.
@@ -159,29 +161,29 @@ public static class FakeParseUsbs {
     $sourceReferences = @($calls | Where-Object { $_ -like ("*" + $sourceRoot + "*") })
     Assert-True ($sourceReferences.Count -eq 0) 'Tool was never given a path inside the evidence source root'
 
-    # 4. Every tool invocation pointed at the staging area.
+    # 4. The single volume-mode invocation pointed at the staging area.
     $stagedReferences = @($calls | Where-Object { $_ -like ("*" + $stagingDirectory + "*") })
-    Assert-True ($calls.Count -eq 2) ("Both phases ran (" + $calls.Count + " invocations)")
+    Assert-True ($calls.Count -eq 1) ('Exactly one invocation ran (' + $calls.Count + ')')
     Assert-True ($stagedReferences.Count -eq $calls.Count) 'Every invocation pointed at the staging area'
 
-    # 5. Phases used the intended argument shapes.
-    Assert-True ($calls[0] -like '*-s *' -and $calls[0] -like '*-w *' -and $calls[0] -like '*-u *') 'Registry phase used explicit -s / -w / -u hive arguments'
-    Assert-True ($calls[1] -like '-v *') 'Volume phase used -v against the staged volume'
+    # 5. Volume mode only. Explicit hive mode crashes in ParseUSBs 1.8.
+    Assert-True ($calls[0] -notlike '*-s *' -and $calls[0] -notlike '*-u *' -and $calls[0] -notlike '*-w *') 'No explicit hive arguments were used'
+    Assert-True ($calls[0] -like '-v *') 'Volume mode used -v against the staged volume'
 
     # 6. Staging actually holds copies, including transaction logs.
     Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\config\SYSTEM.LOG1')) 'Staged SYSTEM transaction log present'
     Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Users\Analyst\NTUSER.dat.LOG1')) 'Staged NTUSER transaction log present'
     Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Users\Analyst\AppData\Roaming\Microsoft\Windows\Recent\usb-device.lnk')) 'Staged user LNK present'
-    Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\winevt\Logs\Microsoft-Windows-Partition%4Diagnostic.evtx')) 'Staged USB event log present'
+    Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\winevt\Logs\Microsoft-Windows-Partition%4Diagnostic.evtx')) 'Velociraptor-encoded USB event log staged under its canonical name'
+    Assert-True (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\winevt\Logs\Microsoft-Windows-Storsvc%4Diagnostic.evtx')) 'Canonically named USB event log staged'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\winevt\Logs\Security.evtx'))) 'Unrelated event log was not staged'
 
     # 7. Staged copies are writable, so the tool can replay into them.
     $stagedSystem = Get-Item -LiteralPath (Join-Path $stagingDirectory 'Windows\System32\config\SYSTEM') -Force
     Assert-True (-not $stagedSystem.IsReadOnly) 'Staged SYSTEM hive is writable (read-only flag not carried over)'
 
-    # 8. Results were published with distinct per-phase names.
-    Assert-True (Test-Path -LiteralPath (Join-Path $result.OutputDirectory 'TESTHOST-ParseUSBs-RegistryHives-usb-devices.csv')) 'Registry-phase CSV published'
-    Assert-True (Test-Path -LiteralPath (Join-Path $result.OutputDirectory 'TESTHOST-ParseUSBs-VolumeEnrichment-usb-devices.csv')) 'Volume-phase CSV published'
+    # 8. Results were published.
+    Assert-True (Test-Path -LiteralPath (Join-Path $result.OutputDirectory 'TESTHOST-ParseUSBs-usb-devices.csv')) 'Result CSV published with a hostname prefix'
     Assert-True ($result.Status -eq 'Completed') 'Module reported Completed'
 
     Write-Host ''

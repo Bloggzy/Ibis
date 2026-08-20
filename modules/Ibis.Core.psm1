@@ -2261,6 +2261,39 @@ function Copy-IbisRegistryHiveToCache {
     }
 }
 
+function Find-IbisUsbEventLogCandidate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EventLogDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CanonicalName
+    )
+
+    # Velociraptor percent-encodes the '%' in a channel name, so the on-disk name
+    # for Microsoft-Windows-Partition%4Diagnostic.evtx becomes ...Partition%254Diagnostic.evtx.
+    # Prefer the canonical name, then the encoded collection form.
+    $candidates = @(
+        [pscustomobject]@{ Name = $CanonicalName; DiscoveryMethod = 'Canonical name' },
+        [pscustomobject]@{ Name = $CanonicalName.Replace('%', '%25'); DiscoveryMethod = 'Velociraptor encoded name' }
+    )
+
+    foreach ($candidate in $candidates) {
+        $candidatePath = Join-Path $EventLogDirectory $candidate.Name
+        if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+            return [pscustomobject]@{
+                CanonicalName = $CanonicalName
+                SourceName = $candidate.Name
+                SourcePath = $candidatePath
+                DiscoveryMethod = $candidate.DiscoveryMethod
+            }
+        }
+    }
+
+    $null
+}
+
 function Copy-IbisParseUsbEvidenceToStaging {
     [CmdletBinding()]
     param(
@@ -2336,14 +2369,23 @@ function Copy-IbisParseUsbEvidenceToStaging {
     $stagingEventLogDirectory = Join-Path $StagingDirectory 'Windows\System32\winevt\Logs'
     $usbEventLogNames = @('Microsoft-Windows-Partition%4Diagnostic.evtx', 'Microsoft-Windows-Storsvc%4Diagnostic.evtx')
     foreach ($eventLogName in $usbEventLogNames) {
-        $sourceEventLogPath = Join-Path $eventLogDirectory $eventLogName
-        if (Test-Path -LiteralPath $sourceEventLogPath -PathType Leaf) {
+        $candidate = Find-IbisUsbEventLogCandidate -EventLogDirectory $eventLogDirectory -CanonicalName $eventLogName
+        if ($null -ne $candidate) {
             if (-not (Test-Path -LiteralPath $stagingEventLogDirectory)) {
                 New-Item -ItemType Directory -Path $stagingEventLogDirectory -Force | Out-Null
             }
+
+            # Stage under the canonical Windows name whatever the collection called it,
+            # because ParseUSBs looks for that exact name during volume processing.
             $stagingEventLogPath = Join-Path $stagingEventLogDirectory $eventLogName
-            Copy-IbisEvidenceFile -SourcePath $sourceEventLogPath -DestinationPath $stagingEventLogPath | Out-Null
-            $stagedEventLogs += [pscustomobject]@{ Name = $eventLogName; SourcePath = $sourceEventLogPath; StagingPath = $stagingEventLogPath }
+            Copy-IbisEvidenceFile -SourcePath $candidate.SourcePath -DestinationPath $stagingEventLogPath | Out-Null
+            $stagedEventLogs += [pscustomobject]@{
+                Name = $eventLogName
+                SourceName = $candidate.SourceName
+                DiscoveryMethod = $candidate.DiscoveryMethod
+                SourcePath = $candidate.SourcePath
+                StagingPath = $stagingEventLogPath
+            }
         }
     }
 
@@ -6358,29 +6400,24 @@ function Get-IbisParseUsbArgumentList {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('RegistryHives', 'VolumeEnrichment')]
-        [string]$Phase,
-
-        [Parameter(Mandatory = $true)]
         [object]$Staging,
 
         [Parameter(Mandatory = $true)]
         [string]$OutputDirectory
     )
 
-    if ($Phase -eq 'VolumeEnrichment') {
-        return @('-v', $Staging.StagingDirectory.TrimEnd('\', '/'), '-o', 'csv', '-d', $OutputDirectory)
+    # Volume mode only.  ParseUSBs 1.8 crashes in explicit hive mode (-s/-w/-u) with
+    # 'NameError: name ... is not defined', even with the tool's own documented syntax,
+    # so that pass could never produce output.  Volume mode covers the same registry
+    # hives and adds the USB event logs and user LNK files.
+    if (-not (Test-Path -LiteralPath $Staging.StagingDirectory -PathType Container)) {
+        throw 'The ParseUSBs staging directory was not found.'
+    }
+    if (-not (Test-Path -LiteralPath $Staging.SystemHivePath -PathType Leaf)) {
+        throw 'The staged SYSTEM hive was not found.'
     }
 
-    if (-not (Test-Path -LiteralPath $Staging.SystemHivePath -PathType Leaf)) { throw 'The staged SYSTEM hive was not found.' }
-    if (-not (Test-Path -LiteralPath $Staging.SoftwareHivePath -PathType Leaf)) { throw 'The staged SOFTWARE hive was not found.' }
-
-    $arguments = @('-s', $Staging.SystemHivePath, '-w', $Staging.SoftwareHivePath)
-    foreach ($userHive in @($Staging.UserHives | Where-Object { -not $_.IsDefaultProfile })) {
-        if (Test-Path -LiteralPath $userHive.HivePath -PathType Leaf) { $arguments += @('-u', $userHive.HivePath) }
-    }
-    $arguments += @('-o', 'csv', '-d', $OutputDirectory)
-    $arguments
+    @('-v', $Staging.StagingDirectory.TrimEnd('\', '/'), '-o', 'csv', '-d', $OutputDirectory)
 }
 
 function Move-IbisParseUsbOutput {
@@ -6388,18 +6425,17 @@ function Move-IbisParseUsbOutput {
     param(
         [Parameter(Mandatory = $true)] [string]$StagingDirectory,
         [Parameter(Mandatory = $true)] [string]$OutputDirectory,
-        [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$Hostname,
-        [Parameter(Mandatory = $true)] [ValidateSet('RegistryHives', 'VolumeEnrichment')] [string]$Phase
+        [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$Hostname
     )
 
     if (-not (Test-Path -LiteralPath $StagingDirectory -PathType Container)) { return @() }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
     $moved = @()
     foreach ($file in @(Get-ChildItem -LiteralPath $StagingDirectory -File -Recurse -Force -ErrorAction SilentlyContinue)) {
-        $newName = New-IbisHostPrefixedFileName -Hostname $Hostname -Suffix ("ParseUSBs-{0}-{1}" -f $Phase, $file.Name)
+        $newName = New-IbisHostPrefixedFileName -Hostname $Hostname -Suffix ("ParseUSBs-{0}" -f $file.Name)
         $destinationPath = Join-Path $OutputDirectory $newName
         Move-Item -LiteralPath $file.FullName -Destination $destinationPath -Force
-        $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $destinationPath; Phase = $Phase }
+        $moved += [pscustomobject]@{ OriginalPath = $file.FullName; NewPath = $destinationPath }
     }
     $moved
 }
@@ -6441,12 +6477,12 @@ function Invoke-IbisParseUsbArtifacts {
 
     $tool = Get-IbisToolDefinitionById -ToolDefinitions $ToolDefinitions -Id 'parseusbs'
     if ($null -eq $tool) {
-        $toolResults = @([pscustomobject]@{ ToolId = 'parseusbs'; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = 'parseusbs is not configured.' })
+        $toolResult = [pscustomobject]@{ ToolId = 'parseusbs'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = 'parseusbs is not configured.' }
     }
     else {
         $toolPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $tool
         if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
-            $toolResults = @([pscustomobject]@{ ToolId = $tool.id; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = "parseusbs is missing at: $toolPath" })
+            $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; Status = 'Failed'; ExitCode = $null; Message = "parseusbs is missing at: $toolPath" }
         }
         else {
             try {
@@ -6456,41 +6492,60 @@ function Invoke-IbisParseUsbArtifacts {
                     throw $stagingResult.Message
                 }
 
-                $toolResults = @()
-                foreach ($phase in @('RegistryHives', 'VolumeEnrichment')) {
-                    $phaseOutputDirectory = Join-Path $workingsDirectory ("ParseUSBs-{0}-Output" -f $phase)
-                    $phaseOutputBackupPath = Move-IbisExistingDirectoryToBackup -DirectoryPath $phaseOutputDirectory -BackupRoot (Join-Path $workingsDirectory 'ParseUSBs-Output-Backups')
-                    if (-not (Test-Path -LiteralPath $phaseOutputDirectory)) { New-Item -ItemType Directory -Path $phaseOutputDirectory -Force | Out-Null }
-                    $arguments = Get-IbisParseUsbArgumentList -Phase $phase -Staging $stagingResult -OutputDirectory $phaseOutputDirectory
-                    $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList $arguments -WorkingDirectory (Split-Path -Path $toolPath -Parent)
-                    $phaseLogPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ("ParseUSBs-{0}-Log.txt" -f $phase))
-                    $phaseErrorPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix ("ParseUSBs-{0}.stderr.txt" -f $phase))
-                    $processResult.StandardOutput | Out-File -LiteralPath $phaseLogPath -Encoding UTF8
-                    if ($processResult.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($processResult.StandardError)) { $processResult.StandardError | Out-File -LiteralPath $phaseErrorPath -Encoding UTF8 }
-                    $movedOutputs = @(Move-IbisParseUsbOutput -StagingDirectory $phaseOutputDirectory -OutputDirectory $outputDirectory -Hostname $safeHost -Phase $phase)
-                    $phaseStatus = 'Completed'
-                    $phaseMessage = "parseusbs $phase completed against staged evidence."
-                    if ($processResult.ExitCode -ne 0) { $phaseStatus = 'Failed'; $phaseMessage = "parseusbs $phase exited with code $($processResult.ExitCode)." }
-                    elseif ($movedOutputs.Count -eq 0) { $phaseStatus = 'Completed With Warnings'; $phaseMessage = "parseusbs $phase completed, but no output files were found." }
-                    $toolResults += [pscustomobject]@{ ToolId = $tool.id; Phase = $phase; SourceRoot = $stagingDirectory; OriginalSourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagedOutputDirectory = $phaseOutputDirectory; StagedOutputBackupPath = $phaseOutputBackupPath; LogPath = $phaseLogPath; StandardErrorPath = $phaseErrorPath; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = $phaseStatus; ExitCode = $processResult.ExitCode; CommandLine = $processResult.CommandLine; MovedOutputs = $movedOutputs; Message = $phaseMessage }
+                $stagedOutputDirectory = Join-Path $workingsDirectory 'ParseUSBs-Output'
+                $stagedOutputBackupPath = Move-IbisExistingDirectoryToBackup -DirectoryPath $stagedOutputDirectory -BackupRoot (Join-Path $workingsDirectory 'ParseUSBs-Output-Backups')
+                if (-not (Test-Path -LiteralPath $stagedOutputDirectory)) { New-Item -ItemType Directory -Path $stagedOutputDirectory -Force | Out-Null }
+
+                $arguments = Get-IbisParseUsbArgumentList -Staging $stagingResult -OutputDirectory $stagedOutputDirectory
+                $processResult = Invoke-IbisProcessCapture -FilePath $toolPath -ArgumentList $arguments -WorkingDirectory (Split-Path -Path $toolPath -Parent)
+                $logPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'ParseUSBs-Log.txt')
+                $errorPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'ParseUSBs.stderr.txt')
+                $processResult.StandardOutput | Out-File -LiteralPath $logPath -Encoding UTF8
+                if ($processResult.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($processResult.StandardError)) { $processResult.StandardError | Out-File -LiteralPath $errorPath -Encoding UTF8 }
+                $movedOutputs = @(Move-IbisParseUsbOutput -StagingDirectory $stagedOutputDirectory -OutputDirectory $outputDirectory -Hostname $safeHost)
+
+                # ParseUSBs writes no CSV when it observed no devices.  That is a finding
+                # about the evidence, not a processing problem, so report it as a result.
+                $noDevicesObserved = ($processResult.StandardOutput -match 'No USB device connections found')
+                $toolStatus = 'Completed'
+                $toolMessage = 'parseusbs completed against staged evidence.'
+                if ($processResult.ExitCode -ne 0) {
+                    $toolStatus = 'Failed'
+                    $toolMessage = "parseusbs exited with code $($processResult.ExitCode)."
                 }
+                elseif ($movedOutputs.Count -eq 0 -and $noDevicesObserved) {
+                    $toolMessage = 'parseusbs completed. No USB device connections were observed in the available artefacts.'
+                }
+                elseif ($movedOutputs.Count -eq 0) {
+                    $toolStatus = 'Completed With Warnings'
+                    $toolMessage = 'parseusbs completed, but no output files were found.'
+                }
+
+                $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $stagingDirectory; OriginalSourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagedOutputDirectory = $stagedOutputDirectory; StagedOutputBackupPath = $stagedOutputBackupPath; LogPath = $logPath; StandardErrorPath = $errorPath; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = $toolStatus; ExitCode = $processResult.ExitCode; CommandLine = $processResult.CommandLine; NoDevicesObserved = [bool]$noDevicesObserved; MovedOutputs = $movedOutputs; Message = $toolMessage }
             }
             catch {
-                $toolResults = @([pscustomobject]@{ ToolId = $tool.id; Phase = 'RegistryHives'; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = 'Failed'; ExitCode = $null; Message = "ParseUSBs evidence staging failed: $($_.Exception.Message)" })
+                $toolResult = [pscustomobject]@{ ToolId = $tool.id; SourceRoot = $SourceRoot; OutputDirectory = $outputDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Status = 'Failed'; ExitCode = $null; Message = "ParseUSBs evidence staging failed: $($_.Exception.Message)" }
             }
         }
     }
 
     $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'USB.json')
-    $payload = [pscustomobject]@{ ModuleId = 'usb'; Created = (Get-Date).ToString('s'); SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; WorkingsDirectory = $workingsDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Staging = $stagingResult; ToolResults = @($toolResults) }
+    $payload = [pscustomobject]@{ ModuleId = 'usb'; Created = (Get-Date).ToString('s'); SourceRoot = $SourceRoot; ToolsRoot = $ToolsRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; WorkingsDirectory = $workingsDirectory; StagingDirectory = $stagingDirectory; StagingBackupPath = $stagingBackupPath; Staging = $stagingResult; ToolResults = @($toolResult) }
     $payload | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $summaryPath -Encoding UTF8
 
     $status = 'Completed'
     $message = 'USB artefact processing completed.'
-    $registryResult = @($toolResults | Where-Object { $_.Phase -eq 'RegistryHives' }) | Select-Object -First 1
-    $volumeResult = @($toolResults | Where-Object { $_.Phase -eq 'VolumeEnrichment' }) | Select-Object -First 1
-    if ($null -eq $registryResult -or $registryResult.Status -eq 'Failed') { $status = 'Failed'; $message = 'parseusbs registry-hive processing failed. See USB summary JSON for details.' }
-    elseif (($null -ne $volumeResult -and $volumeResult.Status -eq 'Failed') -or ($toolResults | Where-Object { $_.Status -match 'Warnings' }).Count -gt 0) { $status = 'Completed With Warnings'; $message = 'USB artefact processing completed with warning(s). See summary JSON for details.' }
+    if ($toolResult.Status -eq 'Failed') {
+        $status = 'Failed'
+        $message = 'parseusbs failed. See USB summary JSON for details.'
+    }
+    elseif ($toolResult.Status -match 'Warnings') {
+        $status = 'Completed With Warnings'
+        $message = 'USB artefact processing completed with warning(s). See summary JSON for details.'
+    }
+    elseif ($toolResult.NoDevicesObserved) {
+        $message = 'USB artefact processing completed. No USB device connections were observed in the available artefacts.'
+    }
 
     [pscustomobject]@{ ModuleId = 'usb'; Status = $status; SourceRoot = $SourceRoot; HostOutputRoot = $hostOutputRoot; OutputDirectory = $outputDirectory; JsonPath = $summaryPath; Message = $message }
 }
@@ -6973,6 +7028,7 @@ Export-ModuleMember -Function Get-IbisWindowsRegistryHiveName
 Export-ModuleMember -Function Test-IbisRegistryHiveTransactionState
 Export-ModuleMember -Function Copy-IbisEvidenceFile
 Export-ModuleMember -Function Copy-IbisRegistryHiveToCache
+Export-ModuleMember -Function Find-IbisUsbEventLogCandidate
 Export-ModuleMember -Function Copy-IbisParseUsbEvidenceToStaging
 Export-ModuleMember -Function Invoke-IbisRegistryHiveTransactionReplay
 Export-ModuleMember -Function Get-IbisCachedRegistryHivePreparation

@@ -1,6 +1,6 @@
 ﻿{
     "name":  "Ibis",
-    "version":  "0.7.1",
+    "version":  "0.7.2",
     "defaultToolsRoot":  "C:\\DFIR\\Tools",
     "defaultSourceRoot":  "C:\\Source\\Evidence",
     "defaultOutputRoot":  "C:\\Export\\Output",
@@ -130,7 +130,7 @@
                     {
                         "id":  "usb",
                         "name":  "ParseUSBs",
-                        "hint":  "Runs ParseUSBs against staged system and user hive copies, then a separate staged volume-enrichment pass for USB artefacts. Any transaction updates remain in the staging area; source evidence is unchanged.",
+                        "hint":  "Runs ParseUSBs in volume mode against a staged copy of the USB-relevant evidence. Any transaction replay stays in the staging area; source evidence is unchanged.",
                         "enabledByDefault":  true,
                         "status":  "implemented"
                     }

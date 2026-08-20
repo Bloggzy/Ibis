@@ -4,6 +4,13 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.2 - 2026-08-20
+
+- Removed the ParseUSBs explicit hive pass. ParseUSBs 1.8 crashes in that mode with `NameError: name 'userfolders' is not defined`, even with the syntax from its own help text, so it could never produce output. The module now runs one staged volume-mode pass, which covers the same registry hives and adds USB event logs and user LNK files.
+- Accept Velociraptor percent-encoded USB event log names such as `Microsoft-Windows-Partition%254Diagnostic.evtx`, and stage them under the canonical Windows name so ParseUSBs can find them. The selected name and discovery method are recorded in the USB summary JSON.
+- Report "no USB device connections found" as a completed result with an explicit message, instead of a warning about missing output files.
+- Simplified ParseUSBs output names to `HOSTNAME-ParseUSBs-<file>` now that there is a single pass.
+
 ## v0.7.1 - 2026-08-20
 
 - Stage ParseUSBs registry configuration files and transaction logs beneath the module working directory before the tool runs, ensuring any transaction replay remains isolated from source evidence.
