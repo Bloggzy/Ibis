@@ -33,11 +33,17 @@ Pick one of the two options below.
 
 ### Option 1: Extract with 7-Zip (recommended)
 
-7-Zip does not copy the mark of the web onto the extracted files, so there is nothing to clean up afterwards:
+7-Zip does not copy the mark of the web onto the extracted files, so there is nothing to clean up afterwards.
+
+The simplest way is from File Explorer: right-click the ZIP, then choose `7-Zip` and `Extract to "Ibis\"`. On Windows 11 the `7-Zip` entry may sit under `Show more options`.
+
+To do the same from a command line, note that the 7-Zip installer does not add `7z.exe` to `PATH`, so call it by its full path:
 
 ```powershell
-7z x Ibis.zip -oC:\Tools\Ibis
+& "$env:ProgramFiles\7-Zip\7z.exe" x Ibis.zip -oC:\Tools\Ibis
 ```
+
+If 7-Zip was installed as 32-bit on a 64-bit host, it is under `${env:ProgramFiles(x86)}\7-Zip\7z.exe` instead.
 
 Any archive tool that preserves this behaviour works. Only the built-in Windows extractor is a problem.
 
