@@ -5,3 +5,5 @@
 # This file has to sit at .github/FUNDING.yml on the default branch or GitHub
 # does not look at it.
 buy_me_a_coffee: bloggz
+
+# Touched so GitHub re-reads this file after Sponsorships was enabled.
