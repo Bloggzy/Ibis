@@ -1238,7 +1238,7 @@ Describe 'Ibis Hayabusa version handling' {
         $csv | Should Be 'dfir-timeline -d D:\evtx -t csv --iso-8601 -o D:\out.csv -w -C'
 
         $jsonl = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.jsonl') -join ' '
-        $jsonl | Should Be 'dfir-timeline -d D:\evtx -t jsonl -x -U -a -A -w -p super-verbose -o D:\out.jsonl -C'
+        $jsonl | Should Be 'dfir-timeline -d D:\evtx -t jsonl -U -w -p super-verbose -o D:\out.jsonl -C'
     }
 
     It 'builds Hayabusa 3 timeline arguments' {
@@ -1248,7 +1248,37 @@ Describe 'Ibis Hayabusa version handling' {
         $csv | Should Be 'csv-timeline -d D:\evtx --ISO-8601 -o D:\out.csv -w -C'
 
         $jsonl = (Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory 'D:\evtx' -OutputPath 'D:\out.jsonl') -join ' '
-        $jsonl | Should Be 'json-timeline -d D:\evtx -x -U -a -A -w -p super-verbose -L -o D:\out.jsonl -C'
+        $jsonl | Should Be 'json-timeline -d D:\evtx -U -w -p super-verbose -L -o D:\out.jsonl -C'
+    }
+
+    It 'keeps the channel filter on for both timelines' {
+        # -a and -A both turn the channel filter off, so Hayabusa opens every log
+        # in the folder. On a real triage collection that made Hayabusa 4.2.0
+        # open Kernel-PnP%4Configuration.evtx, request a single 10 GiB
+        # allocation and abort, losing the whole JSONL timeline. Tested by hand:
+        # with -A alone it still crashed; with neither it finished.
+        foreach ($helpText in @($v4Help, $v3Help)) {
+            $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $helpText
+            foreach ($format in @('csv', 'jsonl')) {
+                $arguments = @(Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format $format -SourceDirectory 'D:\evtx' -OutputPath 'D:\out')
+                foreach ($flag in @('-a', '--scan-all-evtx-files', '-A', '--enable-all-rules')) {
+                    ($arguments -ccontains $flag) | Should Be $false
+                }
+            }
+        }
+    }
+
+    It 'does not carve records from slack space' {
+        # Hayabusa leaves -x off by default and the CSV pass never used it.
+        # Carving is a by-hand step for cleared logs.
+        foreach ($helpText in @($v4Help, $v3Help)) {
+            $capability = Get-IbisHayabusaCapability -HayabusaPath 'C:\Tools\hayabusa.exe' -HelpText $helpText
+            foreach ($format in @('csv', 'jsonl')) {
+                $arguments = @(Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format $format -SourceDirectory 'D:\evtx' -OutputPath 'D:\out')
+                ($arguments -ccontains '-x') | Should Be $false
+                ($arguments -contains '--recover-records') | Should Be $false
+            }
+        }
     }
 
     It 'always overwrites an existing timeline' {
@@ -2714,7 +2744,13 @@ Describe 'Ibis SRUM and user artefacts' {
         $alicePsReadLine = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
         $bobPsReadLine = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
 
-        New-Item -ItemType Directory -Path $aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine,$toolsRoot -Force | Out-Null
+        $jumpListFolders = @(
+            (Join-Path $aliceRecent 'AutomaticDestinations'),
+            (Join-Path $aliceRecent 'CustomDestinations'),
+            (Join-Path $bobRecent 'AutomaticDestinations'),
+            (Join-Path $bobRecent 'CustomDestinations')
+        )
+        New-Item -ItemType Directory -Path (@($aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine,$toolsRoot) + $jumpListFolders) -Force | Out-Null
         'not an executable' | Out-File -LiteralPath $badToolPath -Encoding ASCII
         'Get-Date' | Out-File -LiteralPath (Join-Path $alicePsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
         'Get-Process' | Out-File -LiteralPath (Join-Path $bobPsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
@@ -2744,7 +2780,9 @@ Describe 'Ibis SRUM and user artefacts' {
 
             $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
             $bob = @($result.Users | Where-Object { $_.UserName -eq 'Bob' } | Select-Object -First 1)[0]
-            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
+            # One JLECmd run per jump list folder, and the first failing must not
+            # stop the second.
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 2
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' }).Count | Should Be 1
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-sbecmd' }).Count | Should Be 1
             $alice.PSReadLine.Status | Should Be 'Completed'
@@ -2785,7 +2823,8 @@ Describe 'Ibis SRUM and user artefacts' {
             $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
             $bob = @($result.Users | Where-Object { $_.UserName -eq 'Bob' } | Select-Object -First 1)[0]
 
-            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Skipped' }).Count | Should Be 1
+            # No Recent folder at all, so both jump list folder runs skip.
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Skipped' }).Count | Should Be 2
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' -and $_.Status -eq 'Skipped' }).Count | Should Be 1
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-sbecmd' }).Count | Should Be 1
             $alice.PSReadLine.Status | Should Be 'Completed'
@@ -2808,10 +2847,14 @@ Describe 'Ibis SRUM and user artefacts' {
         $alicePsReadLine = Join-Path $aliceRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
         $bobPsReadLine = Join-Path $bobRoot 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
 
-        New-Item -ItemType Directory -Path $aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine -Force | Out-Null
+        $aliceAutomatic = Join-Path $aliceRecent 'AutomaticDestinations'
+        $aliceCustom = Join-Path $aliceRecent 'CustomDestinations'
+        New-Item -ItemType Directory -Path $aliceRecent,$bobRecent,$alicePsReadLine,$bobPsReadLine,$aliceAutomatic,$aliceCustom -Force | Out-Null
         'Get-Date' | Out-File -LiteralPath (Join-Path $alicePsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
         'Get-Process' | Out-File -LiteralPath (Join-Path $bobPsReadLine 'ConsoleHost_history.txt') -Encoding ASCII
         (Get-Item -LiteralPath $aliceRecent -Force).Attributes = (Get-Item -LiteralPath $aliceRecent -Force).Attributes -bor [System.IO.FileAttributes]::Hidden
+        # A hidden jump list folder is still a jump list folder.
+        (Get-Item -LiteralPath $aliceAutomatic -Force).Attributes = (Get-Item -LiteralPath $aliceAutomatic -Force).Attributes -bor [System.IO.FileAttributes]::Hidden
 
         try {
             $result = Invoke-IbisUserArtifacts `
@@ -2825,7 +2868,7 @@ Describe 'Ibis SRUM and user artefacts' {
                 -ProgressTotal 7
 
             $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' } | Select-Object -First 1)[0]
-            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
+            @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 2
             @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-lecmd' -and $_.Status -eq 'Failed' }).Count | Should Be 1
 
             $events = @(Get-Content -LiteralPath $progressPath | ConvertFrom-Json)
@@ -4171,6 +4214,69 @@ Describe 'Ibis ParseUSBs empty event log handling' {
         }
         finally {
             Remove-Item -LiteralPath $fixture.Root -Recurse -Force
+        }
+    }
+}
+
+Describe 'Ibis JLECmd jump list folders' {
+    It 'points JLECmd at the two jump list folders, not at Recent' {
+        # JLECmd 2026.10 hands every entry under Recent to its custom jump list
+        # reader, including both jump list folders and desktop.ini, so it exits
+        # 1 on every profile even when each real jump list parsed.
+        $folders = @(Get-IbisJumpListSourceFolder -RecentPath 'E:\Users\Alice\AppData\Roaming\Microsoft\Windows\Recent' -OutputDirectory 'F:\Out\Alice\JumpLists')
+
+        $folders.Count | Should Be 2
+        $folders[0].SourceDirectory | Should Be 'E:\Users\Alice\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations'
+        $folders[1].SourceDirectory | Should Be 'E:\Users\Alice\AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations'
+        foreach ($folder in $folders) {
+            $folder.SourceDirectory | Should Not Be 'E:\Users\Alice\AppData\Roaming\Microsoft\Windows\Recent'
+        }
+    }
+
+    It 'gives each JLECmd run its own output folder' {
+        # Both runs write files with the same base names, so a shared folder
+        # would let the second run overwrite the first run's CSV.
+        $folders = @(Get-IbisJumpListSourceFolder -RecentPath 'E:\Recent' -OutputDirectory 'F:\Out\JumpLists')
+
+        $folders[0].OutputDirectory | Should Be 'F:\Out\JumpLists\AutomaticDestinations'
+        $folders[1].OutputDirectory | Should Be 'F:\Out\JumpLists\CustomDestinations'
+        $folders[0].OutputDirectory | Should Not Be $folders[1].OutputDirectory
+    }
+
+    It 'names each run so the summary tells them apart' {
+        $folders = @(Get-IbisJumpListSourceFolder -RecentPath 'E:\Recent' -OutputDirectory 'F:\Out\JumpLists')
+
+        $folders[0].Artifact | Should Be 'JumpLists (Automatic)'
+        $folders[1].Artifact | Should Be 'JumpLists (Custom)'
+    }
+
+    It 'builds the JLECmd arguments for one folder' {
+        (Get-IbisJlecmdArgumentList -SourceDirectory 'E:\Recent\AutomaticDestinations' -OutputDirectory 'F:\Out\JumpLists\AutomaticDestinations') -join ' ' |
+            Should Be '-d E:\Recent\AutomaticDestinations --all --csv F:\Out\JumpLists\AutomaticDestinations --html F:\Out\JumpLists\AutomaticDestinations -q --fd'
+    }
+
+    It 'skips only the missing jump list folder and still reads the other' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Evidence'
+        $recent = Join-Path $sourceRoot 'Users\Alice\AppData\Roaming\Microsoft\Windows\Recent'
+        New-Item -ItemType Directory -Path (Join-Path $recent 'AutomaticDestinations') -Force | Out-Null
+        'desktop.ini content' | Out-File -LiteralPath (Join-Path $recent 'desktop.ini') -Encoding ASCII
+
+        try {
+            $result = Invoke-IbisUserArtifacts -ToolsRoot $tempRoot -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot (Join-Path $tempRoot 'Output') -Hostname 'TESTHOST'
+            $alice = @($result.Users | Where-Object { $_.UserName -eq 'Alice' })[0]
+            $jumpListResults = @($alice.ToolResults | Where-Object { $_.ToolId -eq 'zimmerman-jlecmd' })
+
+            $jumpListResults.Count | Should Be 2
+            $automatic = @($jumpListResults | Where-Object { $_.SourceDirectory -like '*\AutomaticDestinations' })[0]
+            $custom = @($jumpListResults | Where-Object { $_.SourceDirectory -like '*\CustomDestinations' })[0]
+            # The tool is not configured here, so the present folder fails at the
+            # tool lookup, which proves it was attempted. The absent one skips.
+            $automatic.Status | Should Be 'Failed'
+            $custom.Status | Should Be 'Skipped'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
 }

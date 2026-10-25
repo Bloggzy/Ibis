@@ -5198,6 +5198,47 @@ function Get-IbisUserProfile {
     }
 }
 
+function Get-IbisJumpListSourceFolder {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RecentPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory
+    )
+
+    # Always return both, present or not. A missing folder then shows up as its
+    # own Skipped step, and one damaged folder cannot stop the other being read.
+    @(
+        [pscustomobject]@{
+            Kind = 'Automatic'
+            Artifact = 'JumpLists (Automatic)'
+            SourceDirectory = [System.IO.Path]::Combine($RecentPath, 'AutomaticDestinations')
+            OutputDirectory = [System.IO.Path]::Combine($OutputDirectory, 'AutomaticDestinations')
+        },
+        [pscustomobject]@{
+            Kind = 'Custom'
+            Artifact = 'JumpLists (Custom)'
+            SourceDirectory = [System.IO.Path]::Combine($RecentPath, 'CustomDestinations')
+            OutputDirectory = [System.IO.Path]::Combine($OutputDirectory, 'CustomDestinations')
+        }
+    )
+}
+
+function Get-IbisJlecmdArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory
+    )
+
+    @('-d', $SourceDirectory, '--all', '--csv', $OutputDirectory, '--html', $OutputDirectory, '-q', '--fd')
+}
+
 function Invoke-IbisUserDirectoryTool {
     [CmdletBinding()]
     param(
@@ -5848,8 +5889,16 @@ function Invoke-IbisUserArtifacts {
         $jumpListOutput = Join-Path $userOutputDirectory 'JumpLists'
         $recentLnkOutput = Join-Path $userOutputDirectory 'RecentLNKs'
         $shellBagOutput = Join-Path $userOutputDirectory 'ShellBags'
-        $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'JumpLists' -Operation 'Run JLECmd' -ToolId 'zimmerman-jlecmd' -Description 'JLECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $jumpListOutput -ScriptBlock {
-            Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-jlecmd' -SourceDirectory $profile.RecentPath -OutputDirectory $jumpListOutput -ArgumentList @('-d', $profile.RecentPath, '--all', '--csv', $jumpListOutput, '--html', $jumpListOutput, '-q', '--fd') -Description 'JLECmd' -Hostname $safeHost -UserName $safeUserName
+        # JLECmd 2026.10 hands every entry under Recent to its custom jump list
+        # reader, including the AutomaticDestinations and CustomDestinations
+        # folders themselves and desktop.ini. Those three always fail, so JLECmd
+        # exits 1 on every profile even when each real jump list parsed. Point
+        # it at the two jump list folders instead, one run each, and give each
+        # run its own output folder so neither can overwrite the other's CSV.
+        foreach ($jumpListFolder in @(Get-IbisJumpListSourceFolder -RecentPath $profile.RecentPath -OutputDirectory $jumpListOutput)) {
+            $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact $jumpListFolder.Artifact -Operation 'Run JLECmd' -ToolId 'zimmerman-jlecmd' -Description 'JLECmd' -SourceDirectory $jumpListFolder.SourceDirectory -OutputDirectory $jumpListFolder.OutputDirectory -ScriptBlock {
+                Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-jlecmd' -SourceDirectory $jumpListFolder.SourceDirectory -OutputDirectory $jumpListFolder.OutputDirectory -ArgumentList (Get-IbisJlecmdArgumentList -SourceDirectory $jumpListFolder.SourceDirectory -OutputDirectory $jumpListFolder.OutputDirectory) -Description 'JLECmd' -Hostname $safeHost -UserName $safeUserName
+            }
         }
         $toolResults += Invoke-IbisUserArtifactStep @progressSplat -UserName $safeUserName -Artifact 'RecentLNKs' -Operation 'Run LECmd' -ToolId 'zimmerman-lecmd' -Description 'LECmd' -SourceDirectory $profile.RecentPath -OutputDirectory $recentLnkOutput -ScriptBlock {
             Invoke-IbisUserDirectoryTool -ToolsRoot $ToolsRoot -ToolDefinitions $ToolDefinitions -ToolId 'zimmerman-lecmd' -SourceDirectory $profile.RecentPath -OutputDirectory $recentLnkOutput -ArgumentList @('-d', $profile.RecentPath, '--all', '--csv', $recentLnkOutput, '-q') -Description 'LECmd' -Hostname $safeHost -UserName $safeUserName
@@ -6553,12 +6602,27 @@ function Get-IbisHayabusaTimelineArgumentList {
 
     # -C overwrites an existing timeline. Without it Hayabusa refuses to write but
     # still exits 0, which would leave a stale file behind and look like success.
+    #
+    # The JSONL pass keeps Hayabusa's channel filter on, the same as the CSV pass.
+    # -a (scan every evtx file) and -A (apply every rule to every channel) both
+    # turn the filter off, so Hayabusa opens every log in the folder rather than
+    # only the ones its rules read. On a real triage collection that made
+    # Hayabusa 4.2.0 open Microsoft-Windows-Kernel-PnP%4Configuration.evtx,
+    # request a single 10 GiB allocation, and abort with 0xC0000409, losing the
+    # whole JSONL timeline Takajo depends on. Tested by hand on that collection:
+    # with -A alone it still crashed on that file; with neither it finished.
+    # The filter only skips logs no rule can match, so little is lost.
+    #
+    # -x (--recover-records, carve records from evtx slack space) is not passed
+    # either. Hayabusa leaves it off by default and the CSV pass never used it.
+    # It was not the cause of the crash above. Carving is a targeted recovery
+    # step for cleared logs; run Hayabusa by hand with -x when a case needs it.
     if ($Capability.UsesOutputType) {
         if ($Format -eq 'csv') {
             return @('dfir-timeline', '-d', $SourceDirectory, '-t', 'csv', '--iso-8601', '-o', $OutputPath, '-w', '-C')
         }
 
-        return @('dfir-timeline', '-d', $SourceDirectory, '-t', 'jsonl', '-x', '-U', '-a', '-A', '-w', '-p', $OutputProfile, '-o', $OutputPath, '-C')
+        return @('dfir-timeline', '-d', $SourceDirectory, '-t', 'jsonl', '-U', '-w', '-p', $OutputProfile, '-o', $OutputPath, '-C')
     }
 
     # Hayabusa 3.x and earlier: separate commands, capitalised long options, and
@@ -6567,7 +6631,7 @@ function Get-IbisHayabusaTimelineArgumentList {
         return @('csv-timeline', '-d', $SourceDirectory, '--ISO-8601', '-o', $OutputPath, '-w', '-C')
     }
 
-    @('json-timeline', '-d', $SourceDirectory, '-x', '-U', '-a', '-A', '-w', '-p', $OutputProfile, '-L', '-o', $OutputPath, '-C')
+    @('json-timeline', '-d', $SourceDirectory, '-U', '-w', '-p', $OutputProfile, '-L', '-o', $OutputPath, '-C')
 }
 
 function Invoke-IbisHayabusaEventLogs {
@@ -8396,6 +8460,8 @@ Export-ModuleMember -Function Copy-IbisEvidenceFile
 Export-ModuleMember -Function Copy-IbisRegistryHiveToCache
 Export-ModuleMember -Function Find-IbisUsbEventLogCandidate
 Export-ModuleMember -Function Copy-IbisParseUsbEvidenceToStaging
+Export-ModuleMember -Function Get-IbisJumpListSourceFolder
+Export-ModuleMember -Function Get-IbisJlecmdArgumentList
 Export-ModuleMember -Function Select-IbisReplayedHiveFile
 Export-ModuleMember -Function Update-IbisPreparedHiveFromReplay
 Export-ModuleMember -Function Invoke-IbisRegistryHiveTransactionReplay
