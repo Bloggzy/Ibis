@@ -2816,12 +2816,37 @@ function Copy-IbisParseUsbEvidenceToStaging {
     }
 
     $stagedEventLogs = @()
+    $skippedEventLogs = @()
     $eventLogDirectory = Join-Path $SourceRoot 'Windows\System32\winevt\Logs'
     $stagingEventLogDirectory = Join-Path $StagingDirectory 'Windows\System32\winevt\Logs'
     $usbEventLogNames = @('Microsoft-Windows-Partition%4Diagnostic.evtx', 'Microsoft-Windows-Storsvc%4Diagnostic.evtx')
     foreach ($eventLogName in $usbEventLogNames) {
         $candidate = Find-IbisUsbEventLogCandidate -EventLogDirectory $eventLogDirectory -CanonicalName $eventLogName
         if ($null -ne $candidate) {
+            # A zero-byte event log is normal in a triage collection: the channel
+            # exists but nothing was captured. ParseUSBs memory-maps every log it
+            # finds and dies on an empty one with 'cannot mmap an empty file',
+            # which loses the registry and LNK results as well. Leave it out.
+            $candidateLength = 0
+            try {
+                $candidateLength = (Get-Item -LiteralPath $candidate.SourcePath -Force).Length
+            }
+            catch {
+                $candidateLength = 0
+            }
+
+            if ($candidateLength -le 0) {
+                $skippedEventLogs += [pscustomobject]@{
+                    Name = $eventLogName
+                    SourceName = $candidate.SourceName
+                    DiscoveryMethod = $candidate.DiscoveryMethod
+                    SourcePath = $candidate.SourcePath
+                    SourceLength = $candidateLength
+                    Reason = 'The event log is empty, and ParseUSBs cannot memory-map an empty file.'
+                }
+                continue
+            }
+
             if (-not (Test-Path -LiteralPath $stagingEventLogDirectory)) {
                 New-Item -ItemType Directory -Path $stagingEventLogDirectory -Force | Out-Null
             }
@@ -2855,7 +2880,101 @@ function Copy-IbisParseUsbEvidenceToStaging {
         LnkFileCount = $stagedLnkFiles.Count
         EventLogs = $stagedEventLogs
         EventLogCount = $stagedEventLogs.Count
-        Message = 'Copied ParseUSBs registry, user-hive, LNK, and supported event-log evidence to the staging area.'
+        SkippedEventLogs = $skippedEventLogs
+        SkippedEventLogCount = $skippedEventLogs.Count
+        Message = if ($skippedEventLogs.Count -gt 0) {
+            'Copied ParseUSBs registry, user-hive, LNK, and supported event-log evidence to the staging area. {0} empty event log(s) were left out: {1}.' -f $skippedEventLogs.Count, ((@($skippedEventLogs | ForEach-Object { $_.SourceName })) -join ', ')
+        }
+        else {
+            'Copied ParseUSBs registry, user-hive, LNK, and supported event-log evidence to the staging area.'
+        }
+    }
+}
+
+function Select-IbisReplayedHiveFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StagingDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HiveFileName
+    )
+
+    if (-not (Test-Path -LiteralPath $StagingDirectory -PathType Container)) {
+        return $null
+    }
+
+    # rla decides the output file name itself. With --nop and no --cn, rla 2026.03
+    # and earlier wrote the hive under its own name; rla 2026.10 writes the
+    # collision-proof drive_profile_name form instead, for example
+    # C__Working_NTUSER.dat. Rather than predict the name, take whatever hive rla
+    # left behind. -Recurse covers the --nop-is-ignored case, where rla rebuilds
+    # the original path under the output directory.
+    $candidates = @(Get-ChildItem -LiteralPath $StagingDirectory -File -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '\.LOG\d*(\.idx)?$' })
+
+    if ($candidates.Count -eq 0) {
+        return $null
+    }
+
+    $exactMatch = @($candidates | Where-Object { $_.Name -eq $HiveFileName })
+    if ($exactMatch.Count -ge 1) {
+        return $exactMatch[0]
+    }
+
+    if ($candidates.Count -eq 1) {
+        return $candidates[0]
+    }
+
+    @($candidates | Sort-Object -Property LastWriteTimeUtc -Descending)[0]
+}
+
+function Update-IbisPreparedHiveFromReplay {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StagingDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HivePath
+    )
+
+    # Without this step the replayed hive sits unused beside the cached copy and
+    # every later tool reads the dirty original, which is the quiet kind of wrong.
+    $hiveFileName = Split-Path -Path $HivePath -Leaf
+    $replayed = Select-IbisReplayedHiveFile -StagingDirectory $StagingDirectory -HiveFileName $hiveFileName
+
+    if ($null -eq $replayed) {
+        return [pscustomobject]@{
+            Promoted = $false
+            ReplayedHiveName = $null
+            ReplayedHivePath = $null
+            Message = 'rla did not write a replayed hive, so the cached copy was left as it was.'
+        }
+    }
+
+    try {
+        Copy-Item -LiteralPath $replayed.FullName -Destination $HivePath -Force -ErrorAction Stop
+        $promotedFile = Get-Item -LiteralPath $HivePath -Force
+        if ($promotedFile.IsReadOnly) {
+            $promotedFile.IsReadOnly = $false
+        }
+
+        [pscustomobject]@{
+            Promoted = $true
+            ReplayedHiveName = $replayed.Name
+            ReplayedHivePath = $replayed.FullName
+            Message = "Replayed hive '$($replayed.Name)' replaced the cached copy."
+        }
+    }
+    catch {
+        [pscustomobject]@{
+            Promoted = $false
+            ReplayedHiveName = $replayed.Name
+            ReplayedHivePath = $replayed.FullName
+            Message = "Replayed hive '$($replayed.Name)' could not replace the cached copy: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -2898,10 +3017,31 @@ function Invoke-IbisRegistryHiveTransactionReplay {
         }
     }
 
+    # rla writes into an empty staging folder of its own rather than straight into
+    # the hive cache. The cache already holds the hive and its transaction logs,
+    # and rla names its output file itself, so a shared folder gives no reliable
+    # way to tell the replayed hive from everything else sitting there.
+    $replayStagingDirectory = Join-Path $OutputDirectory '_rla'
+    try {
+        if (Test-Path -LiteralPath $replayStagingDirectory) {
+            Remove-Item -LiteralPath $replayStagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Path $replayStagingDirectory -Force | Out-Null
+    }
+    catch {
+        return [pscustomobject]@{
+            Status = 'Failed'
+            ExitCode = $null
+            Message = "Could not create the rla staging folder: $($_.Exception.Message)"
+            StandardOutput = ''
+            StandardError = ''
+        }
+    }
+
     try {
         $result = Invoke-IbisProcessCapture `
             -FilePath $rlaPath `
-            -ArgumentList @('-f', $HivePath, '--out', $OutputDirectory, '--nop') `
+            -ArgumentList @('-f', $HivePath, '--out', $replayStagingDirectory, '--nop') `
             -WorkingDirectory (Split-Path -Path $rlaPath -Parent)
         $combinedOutput = @($result.StandardOutput, $result.StandardError) -join [Environment]::NewLine
 
@@ -2926,11 +3066,30 @@ function Invoke-IbisRegistryHiveTransactionReplay {
             $message = "rla exited with code $($result.ExitCode)."
         }
 
+        $promotion = [pscustomobject]@{
+            Promoted = $false
+            ReplayedHiveName = $null
+            ReplayedHivePath = $null
+            Message = 'rla did not complete, so the cached copy was left as it was.'
+        }
+        if ($status -ne 'Failed') {
+            $promotion = Update-IbisPreparedHiveFromReplay -StagingDirectory $replayStagingDirectory -HivePath $HivePath
+            if ($promotion.Promoted) {
+                $message = '{0} {1}' -f $message, $promotion.Message
+            }
+            elseif ($promotion.ReplayedHivePath) {
+                $status = 'Completed With Warnings'
+                $message = $promotion.Message
+            }
+        }
+
         [pscustomobject]@{
             Status = $status
             ExitCode = $result.ExitCode
             CommandLine = $result.CommandLine
             Message = $message
+            ReplayedHivePromoted = $promotion.Promoted
+            ReplayedHiveName = $promotion.ReplayedHiveName
             StandardOutput = $result.StandardOutput
             StandardError = $result.StandardError
         }
@@ -2940,8 +3099,15 @@ function Invoke-IbisRegistryHiveTransactionReplay {
             Status = 'Failed'
             ExitCode = $null
             Message = "rla failed: $($_.Exception.Message)"
+            ReplayedHivePromoted = $false
+            ReplayedHiveName = $null
             StandardOutput = ''
             StandardError = ''
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $replayStagingDirectory) {
+            Remove-Item -LiteralPath $replayStagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -5118,9 +5284,15 @@ function Invoke-IbisUserDirectoryTool {
         -FilePath $toolPath `
         -ArgumentList $ArgumentList `
         -WorkingDirectory (Split-Path -Path $toolPath -Parent)
+    # Diagnostics belong under _Working, not among the analyst's results, and the
+    # Eric Zimmerman tools report parse problems on stdout rather than stderr, so
+    # saving stderr alone left nothing to read when JLECmd exited 1.
+    $savedOutput = @()
     if ($result.ExitCode -ne 0) {
-        $stderrPath = Join-Path $OutputDirectory (($Description -replace '[\\/:*?"<>| ]', '_') + '.stderr.txt')
-        $result.StandardError | Out-File -LiteralPath $stderrPath -Encoding UTF8
+        $savedOutput = @(Save-IbisToolOutputForFailure `
+            -WorkingDirectory (Join-Path $OutputDirectory '_Working') `
+            -BaseFileName (($Description -replace '[\\/:*?"<>| ]', '_')) `
+            -ProcessResult $result)
     }
 
     $renamedOutputs = @(Rename-IbisUserArtifactToolOutput -OutputDirectory $OutputDirectory -Hostname $Hostname -UserName $UserName -ToolName $Description)
@@ -5129,7 +5301,15 @@ function Invoke-IbisUserDirectoryTool {
     $message = "$Description completed."
     if ($result.ExitCode -ne 0) {
         $status = 'Failed'
-        $message = "$Description exited with code $($result.ExitCode)."
+        $message = if (Test-IbisProcessCrashed -ExitCode $result.ExitCode) {
+            '{0} crashed: {1}.' -f $Description, (Format-IbisProcessExitCode -ExitCode $result.ExitCode)
+        }
+        else {
+            '{0} exited with {1}.' -f $Description, (Format-IbisProcessExitCode -ExitCode $result.ExitCode)
+        }
+        if ($savedOutput.Count -gt 0) {
+            $message = '{0} Tool output saved to {1}.' -f $message, ($savedOutput -join ', ')
+        }
     }
     elseif ($afterOutputFiles.Count -le $beforeOutputFiles.Count) {
         $status = 'Completed With Warnings'
@@ -5146,8 +5326,11 @@ function Invoke-IbisUserDirectoryTool {
         OutputDirectory = $OutputDirectory
         Status = $status
         ExitCode = $result.ExitCode
+        ExitDescription = (Format-IbisProcessExitCode -ExitCode $result.ExitCode)
+        Crashed = (Test-IbisProcessCrashed -ExitCode $result.ExitCode)
         CommandLine = $result.CommandLine
         RenamedOutputs = $renamedOutputs
+        SavedOutput = $savedOutput
         Message = $message
     }
 }
@@ -6206,6 +6389,149 @@ function Get-IbisHayabusaCapability {
     }
 }
 
+function Format-IbisProcessExitCode {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        $ExitCode
+    )
+
+    if ($null -eq $ExitCode) {
+        return 'no exit code'
+    }
+
+    $code = [int]$ExitCode
+    if ($code -ge 0) {
+        return "code $code"
+    }
+
+    # A negative exit code is an unhandled Windows exception, not a tool saying
+    # no. Reporting the raw number as if the tool chose it sends the analyst
+    # looking for an option they got wrong, when the tool actually died.
+    $unsigned = [uint32]('0x{0:X8}' -f $code)
+    $hex = '0x{0:X8}' -f $unsigned
+    $named = switch ($hex) {
+        '0xC0000005' { 'access violation' }
+        '0xC000001D' { 'illegal instruction' }
+        '0xC0000025' { 'non-continuable exception' }
+        '0xC000013A' { 'stopped by Ctrl+C' }
+        '0xC0000374' { 'heap corruption' }
+        '0xC00000FD' { 'stack overflow' }
+        '0xC0000409' { 'stack buffer overrun' }
+        '0xC0000017' { 'out of memory' }
+        default { $null }
+    }
+
+    if ($named) {
+        return "crash $hex ($named)"
+    }
+
+    "crash $hex"
+}
+
+function Test-IbisProcessCrashed {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        $ExitCode
+    )
+
+    if ($null -eq $ExitCode) {
+        return $false
+    }
+
+    [bool]([int]$ExitCode -lt 0)
+}
+
+function Save-IbisToolOutputForFailure {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BaseFileName,
+
+        $ProcessResult
+    )
+
+    # A tool that dies often says why on stdout rather than stderr, and a tool
+    # that crashes may say nothing at all. Keep whichever streams have text so
+    # the next question can be answered from the output folder.
+    $saved = @()
+    if ($null -eq $ProcessResult) {
+        return $saved
+    }
+
+    try {
+        if (-not (Test-Path -LiteralPath $WorkingDirectory)) {
+            New-Item -ItemType Directory -Path $WorkingDirectory -Force | Out-Null
+        }
+
+        foreach ($stream in @(
+            [pscustomobject]@{ Suffix = 'stderr'; Text = $ProcessResult.StandardError },
+            [pscustomobject]@{ Suffix = 'stdout'; Text = $ProcessResult.StandardOutput }
+        )) {
+            if ([string]::IsNullOrWhiteSpace($stream.Text)) {
+                continue
+            }
+
+            $path = Join-Path $WorkingDirectory ('{0}.{1}.txt' -f $BaseFileName, $stream.Suffix)
+            $stream.Text | Out-File -LiteralPath $path -Encoding UTF8
+            $saved += $path
+        }
+    }
+    catch {
+        # Losing the diagnostic copy must not turn into a second failure.
+    }
+
+    $saved
+}
+
+function Get-IbisIncompleteHayabusaTimelineName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TimelinePath
+    )
+
+    # Keep the original name recognisable, and keep it off the .jsonl extension
+    # so nothing picks it up as a timeline by pattern.
+    $name = Split-Path -Path $TimelinePath -Leaf
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    '{0}.incomplete.jsonl.txt' -f $stem
+}
+
+function Move-IbisIncompleteHayabusaTimeline {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TimelinePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $TimelinePath -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        if (-not (Test-Path -LiteralPath $WorkingDirectory)) {
+            New-Item -ItemType Directory -Path $WorkingDirectory -Force | Out-Null
+        }
+
+        $destinationPath = Join-Path $WorkingDirectory (Get-IbisIncompleteHayabusaTimelineName -TimelinePath $TimelinePath)
+        Move-Item -LiteralPath $TimelinePath -Destination $destinationPath -Force -ErrorAction Stop
+        $destinationPath
+    }
+    catch {
+        # If it cannot be moved it must stay where it is rather than be deleted;
+        # the status and message still record that the run did not finish.
+        $null
+    }
+}
+
 function Get-IbisHayabusaTimelineArgumentList {
     [CmdletBinding()]
     param(
@@ -6307,17 +6633,47 @@ function Invoke-IbisHayabusaEventLogs {
             $csvResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList $csvArguments -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
             $csvStatus = 'Completed'
             $csvMessage = 'Hayabusa CSV timeline completed.'
-            if ($csvResult.ExitCode -ne 0) { $csvStatus = 'Failed'; $csvMessage = "Hayabusa CSV timeline exited with code $($csvResult.ExitCode)." }
+            $csvSavedOutput = @()
+            if ($csvResult.ExitCode -ne 0) {
+                $csvStatus = 'Failed'
+                $csvMessage = if (Test-IbisProcessCrashed -ExitCode $csvResult.ExitCode) {
+                    'Hayabusa CSV timeline crashed: {0}. Any CSV it had written is incomplete.' -f (Format-IbisProcessExitCode -ExitCode $csvResult.ExitCode)
+                }
+                else {
+                    'Hayabusa CSV timeline exited with {0}.' -f (Format-IbisProcessExitCode -ExitCode $csvResult.ExitCode)
+                }
+                $csvSavedOutput = @(Save-IbisToolOutputForFailure -WorkingDirectory $workingsDirectory -BaseFileName (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-csv') -ProcessResult $csvResult)
+            }
             elseif (-not (Test-Path -LiteralPath $hayabusaCsvPath -PathType Leaf)) { $csvStatus = 'Completed With Warnings'; $csvMessage = 'Hayabusa CSV timeline completed, but the expected CSV was not found.' }
-            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (csv)'; OutputPath = $hayabusaCsvPath; Status = $csvStatus; ExitCode = $csvResult.ExitCode; CommandLine = $csvResult.CommandLine; Message = $csvMessage }
+            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (csv)'; OutputPath = $hayabusaCsvPath; Status = $csvStatus; ExitCode = $csvResult.ExitCode; ExitDescription = (Format-IbisProcessExitCode -ExitCode $csvResult.ExitCode); Crashed = (Test-IbisProcessCrashed -ExitCode $csvResult.ExitCode); CommandLine = $csvResult.CommandLine; SavedOutput = $csvSavedOutput; Message = $csvMessage }
 
             $jsonArguments = Get-IbisHayabusaTimelineArgumentList -Capability $capability -Format 'jsonl' -SourceDirectory $sourceDirectory -OutputPath $hayabusaJsonlPath
             $jsonResult = Invoke-IbisProcessCapture -FilePath $hayabusaPath -ArgumentList $jsonArguments -WorkingDirectory (Split-Path -Path $hayabusaPath -Parent)
             $jsonStatus = 'Completed'
             $jsonMessage = 'Hayabusa JSONL timeline completed.'
-            if ($jsonResult.ExitCode -ne 0) { $jsonStatus = 'Failed'; $jsonMessage = "Hayabusa JSONL timeline exited with code $($jsonResult.ExitCode)." }
+            $jsonSavedOutput = @()
+            $quarantinedJsonlPath = $null
+            if ($jsonResult.ExitCode -ne 0) {
+                $jsonStatus = 'Failed'
+                $jsonMessage = if (Test-IbisProcessCrashed -ExitCode $jsonResult.ExitCode) {
+                    'Hayabusa JSONL timeline crashed: {0}.' -f (Format-IbisProcessExitCode -ExitCode $jsonResult.ExitCode)
+                }
+                else {
+                    'Hayabusa JSONL timeline exited with {0}.' -f (Format-IbisProcessExitCode -ExitCode $jsonResult.ExitCode)
+                }
+                $jsonSavedOutput = @(Save-IbisToolOutputForFailure -WorkingDirectory $workingsDirectory -BaseFileName (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'Hayabusa-jsonl') -ProcessResult $jsonResult)
+
+                # A timeline from a run that died is truncated. Left where Takajo
+                # expects it, it is read as a finished timeline and every Takajo
+                # result is quietly built on part of the evidence. Move it into
+                # _Working, where it is still available to look at by hand.
+                $quarantinedJsonlPath = Move-IbisIncompleteHayabusaTimeline -TimelinePath $hayabusaJsonlPath -WorkingDirectory $workingsDirectory
+                if ($quarantinedJsonlPath) {
+                    $jsonMessage = '{0} The incomplete timeline was moved to {1} so Takajo does not read it as a finished one.' -f $jsonMessage, $quarantinedJsonlPath
+                }
+            }
             elseif (-not (Test-Path -LiteralPath $hayabusaJsonlPath -PathType Leaf)) { $jsonStatus = 'Completed With Warnings'; $jsonMessage = 'Hayabusa JSONL timeline completed, but the expected JSONL was not found.' }
-            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (jsonl)'; OutputPath = $hayabusaJsonlPath; Status = $jsonStatus; ExitCode = $jsonResult.ExitCode; CommandLine = $jsonResult.CommandLine; Message = $jsonMessage }
+            $toolResults += [pscustomobject]@{ ToolId = $hayabusa.id; Mode = $capability.TimelineCommand + ' (jsonl)'; OutputPath = $hayabusaJsonlPath; Status = $jsonStatus; ExitCode = $jsonResult.ExitCode; ExitDescription = (Format-IbisProcessExitCode -ExitCode $jsonResult.ExitCode); Crashed = (Test-IbisProcessCrashed -ExitCode $jsonResult.ExitCode); CommandLine = $jsonResult.CommandLine; SavedOutput = $jsonSavedOutput; IncompleteTimelinePath = $quarantinedJsonlPath; Message = $jsonMessage }
         }
     }
 
@@ -6553,14 +6909,25 @@ function Invoke-IbisTakajoEventLogs {
     $hasExistingTakajoOutput = $hasExistingTakajoDirectory -and @((Get-ChildItem -LiteralPath $takajoOutputDirectory -Force)).Count -gt 0
 
     if (-not (Test-Path -LiteralPath $hayabusaJsonlPath -PathType Leaf)) {
+        # Hayabusa moves a timeline from a run that died into its own _Working
+        # folder. Say so, rather than let the analyst think Hayabusa never ran.
+        $incompleteTimelinePath = Join-Path (Join-Path (Split-Path -Path $hayabusaJsonlPath -Parent) '_Working') (Get-IbisIncompleteHayabusaTimelineName -TimelinePath $hayabusaJsonlPath)
+        $skipMessage = if (Test-Path -LiteralPath $incompleteTimelinePath -PathType Leaf) {
+            'Takajo skipped because the Hayabusa JSONL timeline is incomplete. Hayabusa did not finish, and its partial timeline is at {0}. Re-run Hayabusa, then Takajo.' -f $incompleteTimelinePath
+        }
+        else {
+            'Takajo skipped because Hayabusa JSONL output was not available. Run Hayabusa first.'
+        }
+
         return [pscustomobject]@{
             ModuleId = 'takajo'
             Status = 'Skipped'
             HayabusaJsonlPath = $hayabusaJsonlPath
+            IncompleteTimelinePath = $(if (Test-Path -LiteralPath $incompleteTimelinePath -PathType Leaf) { $incompleteTimelinePath } else { $null })
             HostOutputRoot = $hostOutputRoot
             OutputDirectory = $takajoOutputDirectory
             JsonPath = $null
-            Message = 'Takajo skipped because Hayabusa JSONL output was not available. Run Hayabusa first.'
+            Message = $skipMessage
         }
     }
 
@@ -8029,6 +8396,8 @@ Export-ModuleMember -Function Copy-IbisEvidenceFile
 Export-ModuleMember -Function Copy-IbisRegistryHiveToCache
 Export-ModuleMember -Function Find-IbisUsbEventLogCandidate
 Export-ModuleMember -Function Copy-IbisParseUsbEvidenceToStaging
+Export-ModuleMember -Function Select-IbisReplayedHiveFile
+Export-ModuleMember -Function Update-IbisPreparedHiveFromReplay
 Export-ModuleMember -Function Invoke-IbisRegistryHiveTransactionReplay
 Export-ModuleMember -Function Get-IbisCachedRegistryHivePreparation
 Export-ModuleMember -Function Invoke-IbisPrepareRegistryHiveFile
@@ -8074,6 +8443,11 @@ Export-ModuleMember -Function Expand-IbisDuckDbSqlTemplate
 Export-ModuleMember -Function Invoke-IbisDuckDbEventLogSummary
 Export-ModuleMember -Function Move-IbisExistingDirectoryToBackup
 Export-ModuleMember -Function Get-IbisHayabusaCapability
+Export-ModuleMember -Function Format-IbisProcessExitCode
+Export-ModuleMember -Function Test-IbisProcessCrashed
+Export-ModuleMember -Function Save-IbisToolOutputForFailure
+Export-ModuleMember -Function Get-IbisIncompleteHayabusaTimelineName
+Export-ModuleMember -Function Move-IbisIncompleteHayabusaTimeline
 Export-ModuleMember -Function Get-IbisHayabusaTimelineArgumentList
 Export-ModuleMember -Function Invoke-IbisHayabusaEventLogs
 Export-ModuleMember -Function Get-IbisHayabusaJsonlPath

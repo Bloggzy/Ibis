@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.6'
+        $config.version | Should Be '0.7.7'
     }
 
     It 'records release history in the changelog' {
@@ -3768,5 +3768,409 @@ Describe 'Ibis launcher' {
         ([regex]::Matches($text, "`n").Count -gt 0) | Should Be $true
         # Every newline must be part of a CRLF pair.
         ([regex]::Matches($text, "`n").Count) | Should Be ([regex]::Matches($text, "`r`n").Count)
+    }
+}
+
+Describe 'Ibis replayed hive promotion' {
+    function New-IbisTestReplayRoot {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path (Join-Path $root 'staging') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $root 'cache') -Force | Out-Null
+        $root
+    }
+
+    It 'prefers a replayed hive that kept its own name' {
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            'exact' | Out-File -LiteralPath (Join-Path $staging 'NTUSER.dat') -Encoding ASCII
+            'other' | Out-File -LiteralPath (Join-Path $staging 'C__Working_NTUSER.dat') -Encoding ASCII
+
+            $chosen = Select-IbisReplayedHiveFile -StagingDirectory $staging -HiveFileName 'NTUSER.dat'
+            $chosen.Name | Should Be 'NTUSER.dat'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'takes the renamed hive rla 2026.10 writes' {
+        # rla 2026.10 names the output drive_profile_name even without --cn, so
+        # the cleaned NTUSER.dat arrives as something like C__Working_NTUSER.dat.
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            'replayed' | Out-File -LiteralPath (Join-Path $staging 'C__Working_NTUSER.dat') -Encoding ASCII
+
+            $chosen = Select-IbisReplayedHiveFile -StagingDirectory $staging -HiveFileName 'NTUSER.dat'
+            $chosen.Name | Should Be 'C__Working_NTUSER.dat'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'finds a hive rla rebuilt under its original path' {
+        # If --nop is ignored, rla recreates <out>\C\Users\User\NTUSER.dat.
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            $nested = [System.IO.Path]::Combine($staging, 'C', 'Users', 'User')
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+            'replayed' | Out-File -LiteralPath (Join-Path $nested 'NTUSER.dat') -Encoding ASCII
+
+            $chosen = Select-IbisReplayedHiveFile -StagingDirectory $staging -HiveFileName 'NTUSER.dat'
+            $chosen.Name | Should Be 'NTUSER.dat'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'ignores transaction logs when choosing the replayed hive' {
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            'log1' | Out-File -LiteralPath (Join-Path $staging 'NTUSER.DAT.LOG1') -Encoding ASCII
+            'log2' | Out-File -LiteralPath (Join-Path $staging 'NTUSER.DAT.LOG2') -Encoding ASCII
+            'idx' | Out-File -LiteralPath (Join-Path $staging 'NTUSER.DAT.LOG2.idx') -Encoding ASCII
+            'replayed' | Out-File -LiteralPath (Join-Path $staging 'C__Working_NTUSER.dat') -Encoding ASCII
+
+            $chosen = Select-IbisReplayedHiveFile -StagingDirectory $staging -HiveFileName 'NTUSER.dat'
+            $chosen.Name | Should Be 'C__Working_NTUSER.dat'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'returns nothing when rla wrote no hive' {
+        $root = New-IbisTestReplayRoot
+        try {
+            Select-IbisReplayedHiveFile -StagingDirectory (Join-Path $root 'staging') -HiveFileName 'NTUSER.dat' | Should Be $null
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'returns nothing when the staging folder is absent' {
+        Select-IbisReplayedHiveFile -StagingDirectory ([System.IO.Path]::Combine('E:\NoSuchDrive', 'staging')) -HiveFileName 'NTUSER.dat' | Should Be $null
+    }
+
+    It 'replaces the cached hive with the replayed one' {
+        # This is the whole point: without it, every later tool reads the dirty
+        # hive while the cleaned one sits unused beside it.
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            $hivePath = Join-Path (Join-Path $root 'cache') 'NTUSER.dat'
+            'dirty' | Out-File -LiteralPath $hivePath -Encoding ASCII
+            'replayed' | Out-File -LiteralPath (Join-Path $staging 'C__Working_NTUSER.dat') -Encoding ASCII
+
+            $promotion = Update-IbisPreparedHiveFromReplay -StagingDirectory $staging -HivePath $hivePath
+
+            $promotion.Promoted | Should Be $true
+            $promotion.ReplayedHiveName | Should Be 'C__Working_NTUSER.dat'
+            (Get-Content -LiteralPath $hivePath) | Should Be 'replayed'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'leaves the cached hive alone when rla wrote nothing' {
+        $root = New-IbisTestReplayRoot
+        try {
+            $hivePath = Join-Path (Join-Path $root 'cache') 'NTUSER.dat'
+            'cached' | Out-File -LiteralPath $hivePath -Encoding ASCII
+
+            $promotion = Update-IbisPreparedHiveFromReplay -StagingDirectory (Join-Path $root 'staging') -HivePath $hivePath
+
+            $promotion.Promoted | Should Be $false
+            $promotion.ReplayedHivePath | Should Be $null
+            (Get-Content -LiteralPath $hivePath) | Should Be 'cached'
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'clears the read-only attribute on the promoted hive' {
+        $root = New-IbisTestReplayRoot
+        try {
+            $staging = Join-Path $root 'staging'
+            $hivePath = Join-Path (Join-Path $root 'cache') 'NTUSER.dat'
+            'dirty' | Out-File -LiteralPath $hivePath -Encoding ASCII
+            $replayedPath = Join-Path $staging 'C__Working_NTUSER.dat'
+            'replayed' | Out-File -LiteralPath $replayedPath -Encoding ASCII
+            (Get-Item -LiteralPath $replayedPath -Force).IsReadOnly = $true
+
+            [void](Update-IbisPreparedHiveFromReplay -StagingDirectory $staging -HivePath $hivePath)
+
+            (Get-Item -LiteralPath $hivePath -Force).IsReadOnly | Should Be $false
+        }
+        finally {
+            Get-ChildItem -LiteralPath $root -Recurse -File -Force | ForEach-Object { $_.IsReadOnly = $false }
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+
+    It 'runs rla into a staging folder of its own' {
+        # The hive cache already holds the hive and its transaction logs, so rla
+        # must not write into it: there would be no reliable way to tell the
+        # replayed hive apart from everything else there.
+        $coreText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Core.psm1') -Raw
+
+        $coreText | Should Match "replayStagingDirectory = Join-Path \`$OutputDirectory '_rla'"
+        $coreText | Should Match "'--out', \`$replayStagingDirectory, '--nop'"
+        $coreText | Should Match 'Update-IbisPreparedHiveFromReplay -StagingDirectory \$replayStagingDirectory'
+    }
+}
+
+Describe 'Ibis process exit reporting' {
+    It 'names a normal exit by its code' {
+        Format-IbisProcessExitCode -ExitCode 0 | Should Be 'code 0'
+        Format-IbisProcessExitCode -ExitCode 1 | Should Be 'code 1'
+    }
+
+    It 'names a missing exit code' {
+        Format-IbisProcessExitCode -ExitCode $null | Should Be 'no exit code'
+    }
+
+    It 'names the crash Hayabusa 4.2.0 died with' {
+        # -1073740791 is 0xC0000409. Reported as a plain code it reads like the
+        # tool chose to stop, and sends the analyst hunting for a bad option.
+        Format-IbisProcessExitCode -ExitCode -1073740791 | Should Be 'crash 0xC0000409 (stack buffer overrun)'
+    }
+
+    It 'names other common Windows crashes' {
+        Format-IbisProcessExitCode -ExitCode -1073741819 | Should Be 'crash 0xC0000005 (access violation)'
+        Format-IbisProcessExitCode -ExitCode -1073740940 | Should Be 'crash 0xC0000374 (heap corruption)'
+        Format-IbisProcessExitCode -ExitCode -1073741571 | Should Be 'crash 0xC00000FD (stack overflow)'
+    }
+
+    It 'still reports an unrecognised crash as a crash' {
+        Format-IbisProcessExitCode -ExitCode -1073741000 | Should Match '^crash 0x[0-9A-F]{8}$'
+    }
+
+    It 'tells a crash apart from a non-zero exit' {
+        Test-IbisProcessCrashed -ExitCode -1073740791 | Should Be $true
+        Test-IbisProcessCrashed -ExitCode 1 | Should Be $false
+        Test-IbisProcessCrashed -ExitCode 0 | Should Be $false
+        Test-IbisProcessCrashed -ExitCode $null | Should Be $false
+    }
+}
+
+Describe 'Ibis failed tool output capture' {
+    It 'saves stdout as well as stderr' {
+        # JLECmd exited 1 with an empty stderr: the Eric Zimmerman tools report
+        # parse problems on stdout, so saving stderr alone left nothing to read.
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        try {
+            $saved = @(Save-IbisToolOutputForFailure -WorkingDirectory $tempRoot -BaseFileName 'JLECmd' -ProcessResult ([pscustomobject]@{
+                StandardOutput = 'Could not parse one jump list'
+                StandardError = 'some error text'
+            }))
+
+            $saved.Count | Should Be 2
+            Test-Path -LiteralPath (Join-Path $tempRoot 'JLECmd.stdout.txt') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $tempRoot 'JLECmd.stderr.txt') | Should Be $true
+            (Get-Content -LiteralPath (Join-Path $tempRoot 'JLECmd.stdout.txt') -Raw) | Should Match 'Could not parse one jump list'
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It 'skips a stream that has nothing in it' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        try {
+            $saved = @(Save-IbisToolOutputForFailure -WorkingDirectory $tempRoot -BaseFileName 'JLECmd' -ProcessResult ([pscustomobject]@{
+                StandardOutput = 'only stdout here'
+                StandardError = '   '
+            }))
+
+            $saved.Count | Should Be 1
+            Test-Path -LiteralPath (Join-Path $tempRoot 'JLECmd.stderr.txt') | Should Be $false
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It 'writes nothing when both streams are empty' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        try {
+            $saved = @(Save-IbisToolOutputForFailure -WorkingDirectory $tempRoot -BaseFileName 'JLECmd' -ProcessResult ([pscustomobject]@{
+                StandardOutput = ''
+                StandardError = ''
+            }))
+
+            $saved.Count | Should Be 0
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It 'handles a missing process result without throwing' {
+        @(Save-IbisToolOutputForFailure -WorkingDirectory 'E:\NoSuchDrive\working' -BaseFileName 'JLECmd' -ProcessResult $null).Count | Should Be 0
+    }
+
+    It 'keeps failed user artefact diagnostics under _Working' {
+        # Diagnostics belong beside the results, not among them.
+        $coreText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Core.psm1') -Raw
+        $coreText | Should Match "Save-IbisToolOutputForFailure ``\r?\n\s+-WorkingDirectory \(Join-Path \`$OutputDirectory '_Working'\)"
+    }
+}
+
+Describe 'Ibis incomplete Hayabusa timeline handling' {
+    It 'names the quarantined timeline so nothing reads it as a timeline' {
+        $name = Get-IbisIncompleteHayabusaTimelineName -TimelinePath 'C:\Export\HOST\EventLogs\Hayabusa\HOST-Hayabusa-EventLogs-SuperVerbose.jsonl'
+        $name | Should Be 'HOST-Hayabusa-EventLogs-SuperVerbose.incomplete.jsonl.txt'
+        $name | Should Not Match '\.jsonl$'
+    }
+
+    It 'moves a timeline from a crashed run into _Working' {
+        # Left in place, Takajo reads a truncated timeline as a finished one and
+        # every Takajo result is quietly built on part of the evidence.
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            $timelinePath = Join-Path $tempRoot 'HOST-Hayabusa-EventLogs-SuperVerbose.jsonl'
+            'partial line' | Out-File -LiteralPath $timelinePath -Encoding UTF8
+            $workingDirectory = Join-Path $tempRoot '_Working'
+
+            $moved = Move-IbisIncompleteHayabusaTimeline -TimelinePath $timelinePath -WorkingDirectory $workingDirectory
+
+            Test-Path -LiteralPath $timelinePath | Should Be $false
+            Test-Path -LiteralPath $moved | Should Be $true
+            $moved | Should Match 'incomplete\.jsonl\.txt$'
+            (Get-Content -LiteralPath $moved -Raw) | Should Match 'partial line'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does nothing when the crashed run wrote no timeline' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            Move-IbisIncompleteHayabusaTimeline -TimelinePath (Join-Path $tempRoot 'absent.jsonl') -WorkingDirectory (Join-Path $tempRoot '_Working') | Should Be $null
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'tells Takajo to point at the incomplete timeline rather than say Hayabusa never ran' {
+        $coreText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Core.psm1') -Raw
+        $coreText | Should Match 'Takajo skipped because the Hayabusa JSONL timeline is incomplete'
+    }
+
+    It 'moves the incomplete timeline aside when the JSONL pass fails' {
+        $coreText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Core.psm1') -Raw
+        $coreText | Should Match 'Move-IbisIncompleteHayabusaTimeline -TimelinePath \$hayabusaJsonlPath'
+    }
+
+    It 'saves Hayabusa output when a pass fails' {
+        # Hayabusa was the one tool whose output was never kept, which is why a
+        # crash left only an exit code to go on.
+        $coreText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Core.psm1') -Raw
+        $coreText | Should Match "Suffix 'Hayabusa-csv'"
+        $coreText | Should Match "Suffix 'Hayabusa-jsonl'"
+    }
+}
+
+Describe 'Ibis ParseUSBs empty event log handling' {
+    function New-IbisTestUsbSource {
+        param([hashtable]$EventLogs)
+
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $configDirectory = [System.IO.Path]::Combine($root, 'source', 'Windows', 'System32', 'config')
+        $logDirectory = [System.IO.Path]::Combine($root, 'source', 'Windows', 'System32', 'winevt', 'Logs')
+        New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
+        New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+        New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($root, 'source', 'Users')) -Force | Out-Null
+        'SYSTEM' | Out-File -LiteralPath (Join-Path $configDirectory 'SYSTEM') -Encoding ASCII
+        'SOFTWARE' | Out-File -LiteralPath (Join-Path $configDirectory 'SOFTWARE') -Encoding ASCII
+
+        foreach ($logName in $EventLogs.Keys) {
+            $path = Join-Path $logDirectory $logName
+            if ($EventLogs[$logName] -eq 0) {
+                [System.IO.File]::WriteAllBytes($path, @())
+            }
+            else {
+                [System.IO.File]::WriteAllBytes($path, (New-Object byte[] $EventLogs[$logName]))
+            }
+        }
+
+        [pscustomobject]@{
+            Root = $root
+            SourceRoot = Join-Path $root 'source'
+            StagingDirectory = Join-Path $root 'staging'
+        }
+    }
+
+    It 'leaves an empty USB event log out of the staging area' {
+        # ParseUSBs memory-maps every event log it finds and dies on an empty one
+        # with 'cannot mmap an empty file', losing the registry and LNK results
+        # as well. An empty channel is normal in a triage collection.
+        $fixture = New-IbisTestUsbSource -EventLogs @{
+            'Microsoft-Windows-Partition%4Diagnostic.evtx' = 0
+            'Microsoft-Windows-Storsvc%4Diagnostic.evtx' = 2048
+        }
+        try {
+            $staging = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $fixture.SourceRoot -StagingDirectory $fixture.StagingDirectory
+
+            $staging.EventLogCount | Should Be 1
+            $staging.EventLogs[0].Name | Should Be 'Microsoft-Windows-Storsvc%4Diagnostic.evtx'
+            $staging.SkippedEventLogCount | Should Be 1
+            $staging.SkippedEventLogs[0].Name | Should Be 'Microsoft-Windows-Partition%4Diagnostic.evtx'
+            $staging.SkippedEventLogs[0].Reason | Should Match 'empty'
+            $staging.Message | Should Match 'empty event log'
+
+            $stagedLogDirectory = [System.IO.Path]::Combine($fixture.StagingDirectory, 'Windows', 'System32', 'winevt', 'Logs')
+            Test-Path -LiteralPath (Join-Path $stagedLogDirectory 'Microsoft-Windows-Partition%4Diagnostic.evtx') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $stagedLogDirectory 'Microsoft-Windows-Storsvc%4Diagnostic.evtx') | Should Be $true
+        }
+        finally {
+            Remove-Item -LiteralPath $fixture.Root -Recurse -Force
+        }
+    }
+
+    It 'stages both USB event logs when neither is empty' {
+        $fixture = New-IbisTestUsbSource -EventLogs @{
+            'Microsoft-Windows-Partition%4Diagnostic.evtx' = 1024
+            'Microsoft-Windows-Storsvc%4Diagnostic.evtx' = 2048
+        }
+        try {
+            $staging = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $fixture.SourceRoot -StagingDirectory $fixture.StagingDirectory
+
+            $staging.EventLogCount | Should Be 2
+            $staging.SkippedEventLogCount | Should Be 0
+            $staging.Message | Should Not Match 'empty event log'
+        }
+        finally {
+            Remove-Item -LiteralPath $fixture.Root -Recurse -Force
+        }
+    }
+
+    It 'reports no event logs when every one of them is empty' {
+        $fixture = New-IbisTestUsbSource -EventLogs @{
+            'Microsoft-Windows-Partition%4Diagnostic.evtx' = 0
+            'Microsoft-Windows-Storsvc%4Diagnostic.evtx' = 0
+        }
+        try {
+            $staging = Copy-IbisParseUsbEvidenceToStaging -SourceRoot $fixture.SourceRoot -StagingDirectory $fixture.StagingDirectory
+
+            $staging.EventLogCount | Should Be 0
+            $staging.SkippedEventLogCount | Should Be 2
+        }
+        finally {
+            Remove-Item -LiteralPath $fixture.Root -Recurse -Force
+        }
     }
 }

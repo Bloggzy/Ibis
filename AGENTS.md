@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.6`.
+Current version: `v0.7.7`.
 
 ## Build From Scratch Shape
 
@@ -86,6 +86,10 @@ HOSTNAME-Tool-Or-Module-Description.ext
 ```
 
 Put final outputs in the module folder or host root. Put helper files, stderr, rendered SQL, copied hives, staging artefacts, and troubleshooting summaries under `_Working` where practical.
+
+When an external tool fails, save stdout as well as stderr with `Save-IbisToolOutputForFailure`. The Eric Zimmerman tools report parse problems on stdout, so stderr alone can be empty. Report a negative exit code as a crash with `Format-IbisProcessExitCode`, never as a plain number: `-1073740791` is `0xC0000409`, and printing the number sends the analyst looking for an option they got wrong.
+
+Output from a tool that died is incomplete. Do not leave it where the next module will read it as finished. Move it under `_Working` and have the consuming module say what happened, as Hayabusa and Takajo do with a crashed timeline.
 
 Normalise timestamp-prefixed tool outputs after execution. Current examples include PECmd, SrumECmd, SumECmd, user artefact tools, Forensic webhistory, and Chainsaw staged outputs.
 
@@ -233,7 +237,7 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 
 - System Summary: RegRipper plugins; final text/JSON in host root; helper plugin output in `_Working`.
 - Velociraptor Results: locate nearby `Results` folder and copy it under host output.
-- Registry Hives: cache hives and logs, attempt dirty hive replay with `rla`, process cached copies.
+- Registry Hives: cache hives and logs, attempt dirty hive replay with `rla`, process cached copies. Never assume the name `rla` gives its output. Run it into an empty `_rla` staging folder and promote whatever hive it leaves there over the cached copy, then re-check. `rla` 2026.10 writes `drive_profile_name` even without `--cn`, and a replayed hive that is not promoted means every later tool silently reads the dirty one.
 - Amcache: prepare `Amcache.hve`, run AmcacheParser and RegRipper variants.
 - AppCompatCache: prepare SYSTEM hive and run AppCompatCacheParser.
 - Prefetch: run PECmd and rename timestamped output.
@@ -242,13 +246,13 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - User Artefacts: process all profiles, including default/system profiles; avoid duplicate folder nesting such as `PSReadLine\PSReadLine`; record per-user/per-artefact failed and skipped results and continue through later artefacts/profiles after a failure; emit progress/log records in user order as each artefact step finishes.
 - Event Logs: run EvtxECmd.
 - DuckDB Event Summaries: sub-module of EvtxECmd using editable SQL templates.
-- Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup tools.
-- Takajo: consume Hayabusa JSONL; run `automagic` and stack commands; back up output folder first; pass `--skipProgressBar` by long name, because `-s` means `sourceUsers` for `stack-users`; save any stderr under `_Working` and quote a short excerpt in the result message.
+- Hayabusa: produce super-verbose JSONL timeline and support `update-rules` from Setup tools; save stdout and stderr under `_Working` when a pass fails; move a timeline from a run that died to `_Working` as `<name>.incomplete.jsonl.txt`.
+- Takajo: consume Hayabusa JSONL, but never a timeline from a run that did not finish; say the timeline is incomplete and name the partial file rather than report that Hayabusa never ran; run `automagic` and stack commands; back up output folder first; pass `--skipProgressBar` by long name, because `-s` means `sourceUsers` for `stack-users`; save any stderr under `_Working` and quote a short excerpt in the result message.
 - Chainsaw: process event logs and normalise staged output.
 - UAL/SUM: run SumECmd against `Windows\System32\LogFiles\Sum`; rename timestamped output.
 - Browser History: BrowsingHistoryView with offline `Users` folder; write results beneath `WebHistory\BrowsingHistoryView`.
 - Forensic Webhistory: run with `--date-format iso`; write results beneath `WebHistory\ForensicWebHistory`.
-- ParseUSBs: stage system hives and transaction logs, per-user `NTUSER.dat` hives and logs, user LNK files, and supported USB event logs under `USB\_Working`; clear read-only attributes on the staged copies; accept Velociraptor percent-encoded event log names and stage them under the canonical Windows name; run one staged volume-mode pass only, because explicit hive mode crashes in ParseUSBs 1.8; treat "no USB device connections found" as a completed result rather than a failure.
+- ParseUSBs: stage system hives and transaction logs, per-user `NTUSER.dat` hives and logs, user LNK files, and supported USB event logs under `USB\_Working`; clear read-only attributes on the staged copies; accept Velociraptor percent-encoded event log names and stage them under the canonical Windows name; run one staged volume-mode pass only, because explicit hive mode crashes in ParseUSBs 1.8; leave zero-byte event logs out of the staging area, because ParseUSBs memory-maps every log it finds and dies on an empty one, losing the registry and LNK results too; treat "no USB device connections found" as a completed result rather than a failure.
 
 ## Versioning
 
