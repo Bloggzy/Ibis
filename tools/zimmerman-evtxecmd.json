@@ -1,10 +1,10 @@
 {
   "id": "zimmerman-evtxecmd",
   "name": "Eric Zimmerman's EvtxECmd",
-  "executablePath": "EZTools\\net9\\EvtxECmd\\EvtxECmd.exe",
-  "installDirectory": "EZTools\\net9\\EvtxECmd",
+  "executablePath": "EZTools\\net10\\EvtxECmd\\EvtxECmd.exe",
+  "installDirectory": "EZTools\\net10\\EvtxECmd",
   "packageType": "zip",
-  "downloadUrl": "https://download.ericzimmermanstools.com/net9/EvtxECmd.zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net/EvtxECmd.zip",
   "manualUrl": "https://ericzimmerman.github.io/#!index.md",
   "notes": "Used for extracting Windows Event Logs to CSV."
 }

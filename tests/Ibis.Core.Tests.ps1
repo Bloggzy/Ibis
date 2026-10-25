@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.5'
+        $config.version | Should Be '0.7.6'
     }
 
     It 'records release history in the changelog' {
@@ -90,7 +90,8 @@ Describe 'Ibis core configuration' {
     It 'checks that a fresh background PowerShell runspace can import Ibis core' {
         $readiness = Get-IbisPowerShellReadiness -ProjectRoot $projectRoot
 
-        $readiness.Files.Count | Should Be 3
+        # The launcher, the entry script, and the two modules.
+        $readiness.Files.Count | Should Be 4
         @($readiness.Files | Where-Object { -not $_.Exists }).Count | Should Be 0
         $readiness.BackgroundImport.Passed | Should Be $true
         $readiness.CanStartBackgroundWork | Should Be $true
@@ -371,8 +372,23 @@ Describe 'Ibis tool download metadata' {
 
         foreach ($tool in $tools) {
             [string]::IsNullOrWhiteSpace($tool.executablePath) | Should Be $false
-            [string]::IsNullOrWhiteSpace($tool.packageType) | Should Be $false
             [string]::IsNullOrWhiteSpace($tool.downloadUrl) | Should Be $false
+            # A tool with a fixed download URL must declare its package type. A
+            # latest-release tool may leave it out and let the resolved asset
+            # name decide, which is how an upstream archive format change is
+            # absorbed without an edit here.
+            if ($tool.downloadUrl -ne 'latest-release') {
+                [string]::IsNullOrWhiteSpace($tool.packageType) | Should Be $false
+            }
+            elseif ([string]::IsNullOrWhiteSpace($tool.packageType)) {
+                # Every asset name it may match must carry an extension Ibis can
+                # unpack, or the install would copy an archive into place.
+                $assetPatterns = @(Get-IbisToolAssetPattern -ToolDefinition $tool)
+                ($assetPatterns.Count -gt 0) | Should Be $true
+                foreach ($assetPattern in $assetPatterns) {
+                    Resolve-IbisToolPackageType -ToolDefinition $tool -DownloadUrl ('https://example.test/' + $assetPattern) | Should Not Be 'file'
+                }
+            }
         }
     }
 
@@ -412,9 +428,9 @@ Describe 'Ibis tool download metadata' {
         $tools = @(Get-IbisToolDefinition -ProjectRoot $projectRoot -Config $config)
         $evtx = Get-IbisToolDefinitionById -ToolDefinitions $tools -Id 'zimmerman-evtxecmd'
 
-        $evtx.executablePath | Should Be 'EZTools\net9\EvtxECmd\EvtxECmd.exe'
-        $evtx.installDirectory | Should Be 'EZTools\net9\EvtxECmd'
-        Get-IbisToolInstallDirectory -ToolsRoot 'C:\DFIR\Tools' -ToolDefinition $evtx | Should Be 'C:\DFIR\Tools\EZTools\net9\EvtxECmd'
+        $evtx.executablePath | Should Be 'EZTools\net10\EvtxECmd\EvtxECmd.exe'
+        $evtx.installDirectory | Should Be 'EZTools\net10\EvtxECmd'
+        Get-IbisToolInstallDirectory -ToolsRoot 'C:\DFIR\Tools' -ToolDefinition $evtx | Should Be 'C:\DFIR\Tools\EZTools\net10\EvtxECmd'
     }
 }
 
@@ -607,7 +623,7 @@ Describe 'Ibis staged tool installs' {
 
     It 'publishes staged files into a shared install directory without backing up unrelated tools' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        $installRoot = Join-Path $tempRoot 'EZTools\net9'
+        $installRoot = Join-Path $tempRoot 'EZTools\net10'
         $stageRoot = Join-Path $tempRoot 'stage'
         New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
         New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
@@ -627,7 +643,7 @@ Describe 'Ibis staged tool installs' {
 
     It 'backs up only conflicting staged items when publishing' {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-        $installRoot = Join-Path $tempRoot 'EZTools\net9'
+        $installRoot = Join-Path $tempRoot 'EZTools\net10'
         $stageRoot = Join-Path $tempRoot 'stage'
         New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
         New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
@@ -1152,7 +1168,8 @@ Describe 'Ibis setup tab layout' {
         }
 
         # Nothing may run into the tool list below.
-        ($previousBottom -le 326) | Should Be $true
+        $toolList = Get-IbisTestControlPoint -Text $guiText -VariableName 'toolList' -Property 'Location'
+        ($previousBottom -le $toolList.Y) | Should Be $true
     }
 
     It 'puts tool management in the right column' {
@@ -3494,3 +3511,262 @@ Describe 'Ibis Velociraptor Results copy-out' {
     }
 }
 
+
+Describe 'Ibis Eric Zimmerman .NET 10 tool metadata' {
+    $projectRoot = Split-Path -Parent $PSScriptRoot
+    $config = Get-IbisConfig -ProjectRoot $projectRoot
+    $zimmermanTools = @(Get-IbisToolDefinition -ProjectRoot $projectRoot -Config $config | Where-Object { $_.id -like 'zimmerman-*' })
+
+    It 'finds the Eric Zimmerman tool definitions' {
+        ($zimmermanTools.Count -gt 0) | Should Be $true
+    }
+
+    It 'downloads every Eric Zimmerman tool from the current .NET download path' {
+        # Eric Zimmerman dropped the framework version from the download path when
+        # the tools moved to .NET 10. The old net9 path now returns 404, so a
+        # stale URL here would fail every EZTool download.
+        foreach ($tool in $zimmermanTools) {
+            $tool.downloadUrl | Should Match '^https://download\.ericzimmermanstools\.com/net/'
+            $tool.downloadUrl | Should Not Match 'net9'
+        }
+    }
+
+    It 'installs every Eric Zimmerman tool under the .NET 10 folder' {
+        foreach ($tool in $zimmermanTools) {
+            $tool.installDirectory | Should Match '^EZTools\\net10'
+            $tool.executablePath | Should Match '^EZTools\\net10\\'
+        }
+    }
+
+    It 'treats any EZTools framework folder as a shared install directory' {
+        # The shared-folder rule must not be pinned to one framework version, or
+        # the next move would quietly back up unrelated tools.
+        $coreText = Get-Content -LiteralPath (Join-Path $projectRoot 'modules\Ibis.Core.psm1') -Raw
+        $coreText | Should Match "installDirectory -like 'EZTools\\net\*'"
+    }
+}
+
+Describe 'Ibis release asset pattern handling' {
+    It 'accepts a single asset pattern as a string' {
+        $patterns = @(Get-IbisToolAssetPattern -ToolDefinition ([pscustomobject]@{ assetPattern = 'one.zip' }))
+        $patterns.Count | Should Be 1
+        $patterns[0] | Should Be 'one.zip'
+    }
+
+    It 'keeps an ordered list of asset patterns' {
+        $patterns = @(Get-IbisToolAssetPattern -ToolDefinition ([pscustomobject]@{ assetPattern = @('new.tar.gz', 'old.zip') }))
+        $patterns.Count | Should Be 2
+        $patterns[0] | Should Be 'new.tar.gz'
+        $patterns[1] | Should Be 'old.zip'
+    }
+
+    It 'ignores blank asset patterns' {
+        $patterns = @(Get-IbisToolAssetPattern -ToolDefinition ([pscustomobject]@{ assetPattern = @('good.zip', '', $null) }))
+        $patterns.Count | Should Be 1
+    }
+
+    It 'returns nothing when no asset pattern is configured' {
+        $patterns = @(Get-IbisToolAssetPattern -ToolDefinition ([pscustomobject]@{ }))
+        $patterns.Count | Should Be 0
+    }
+
+    It 'lists both DuckDB CLI asset names so a rename does not break the download' {
+        # The reported failure was "No GitHub release asset matching
+        # 'duckdb_cli-windows-amd64.zip' was found". DuckDB 2.0.0 renamed the
+        # asset and changed it to .tar.gz, so both names are listed.
+        $projectRoot = Split-Path -Parent $PSScriptRoot
+        $config = Get-IbisConfig -ProjectRoot $projectRoot
+        $tools = @(Get-IbisToolDefinition -ProjectRoot $projectRoot -Config $config)
+        $duckdb = Get-IbisToolDefinitionById -ToolDefinitions $tools -Id 'duckdb'
+
+        $patterns = @(Get-IbisToolAssetPattern -ToolDefinition $duckdb)
+        $patterns[0] | Should Be 'duckdb-cli-windows-amd64.tar.gz'
+        ($patterns -contains 'duckdb_cli-windows-amd64.zip') | Should Be $true
+    }
+
+    It 'lets DuckDB take its package type from the resolved asset' {
+        $projectRoot = Split-Path -Parent $PSScriptRoot
+        $config = Get-IbisConfig -ProjectRoot $projectRoot
+        $tools = @(Get-IbisToolDefinition -ProjectRoot $projectRoot -Config $config)
+        $duckdb = Get-IbisToolDefinitionById -ToolDefinitions $tools -Id 'duckdb'
+
+        [string]::IsNullOrWhiteSpace($duckdb.packageType) | Should Be $true
+        Resolve-IbisToolPackageType -ToolDefinition $duckdb -DownloadUrl 'https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-windows-amd64.tar.gz' | Should Be 'tar.gz'
+        Resolve-IbisToolPackageType -ToolDefinition $duckdb -DownloadUrl 'https://github.com/duckdb/duckdb/releases/download/v1.4.2/duckdb_cli-windows-amd64.zip' | Should Be 'zip'
+    }
+}
+
+Describe 'Ibis package type resolution' {
+    It 'prefers a declared package type' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ packageType = 'zip' }) -DownloadUrl 'https://example.test/thing.tar.gz' | Should Be 'zip'
+    }
+
+    It 'detects a tar.gz download' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ }) -DownloadUrl 'https://example.test/path/tool-windows-amd64.tar.gz' | Should Be 'tar.gz'
+    }
+
+    It 'detects a tgz download' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ }) -DownloadUrl 'https://example.test/tool.tgz' | Should Be 'tar.gz'
+    }
+
+    It 'detects a zip download' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ }) -DownloadUrl 'https://example.test/tool.zip' | Should Be 'zip'
+    }
+
+    It 'falls back to a single file download' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ }) -DownloadUrl 'https://example.test/tool.exe' | Should Be 'file'
+    }
+
+    It 'ignores a query string when detecting the package type' {
+        Resolve-IbisToolPackageType -ToolDefinition ([pscustomobject]@{ }) -DownloadUrl 'https://example.test/tool.tar.gz?token=abc' | Should Be 'tar.gz'
+    }
+
+    It 'finds the Windows tar executable for tar.gz releases' {
+        # Windows 10 1803 and later ship bsdtar, so a .tar.gz asset needs no
+        # extra tool. The 7-Zip path stays as a fallback only.
+        $tarPath = Get-IbisTarPath
+        [string]::IsNullOrWhiteSpace($tarPath) | Should Be $false
+        Test-Path -LiteralPath $tarPath -PathType Leaf | Should Be $true
+    }
+}
+
+Describe 'Ibis .NET runtime prerequisite' {
+    It 'reports the .NET 10 runtime as present when a matching shared runtime exists' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($tempRoot, 'shared', 'Microsoft.NETCore.App', '10.0.3')) -Force | Out-Null
+        New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($tempRoot, 'shared', 'Microsoft.WindowsDesktop.App', '10.0.3')) -Force | Out-Null
+
+        try {
+            $status = Get-IbisDotNetRuntimeStatus -DotNetRoot $tempRoot
+            $status.Present | Should Be $true
+            $status.MinimumMajorVersion | Should Be 10
+            ($status.MatchingRuntimeVersions -contains '10.0.3') | Should Be $true
+            ($status.MatchingDesktopRuntimeVersions -contains '10.0.3') | Should Be $true
+            $status.Message | Should Match '\.NET 10 runtime detected'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports the .NET 10 runtime as missing when only an older runtime exists' {
+        # This is the state of an analyst VM that was ready for the .NET 9
+        # EZTools. Every EZTool would exit with a framework error instead.
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($tempRoot, 'shared', 'Microsoft.NETCore.App', '9.0.21')) -Force | Out-Null
+
+        try {
+            $status = Get-IbisDotNetRuntimeStatus -DotNetRoot $tempRoot
+            $status.Present | Should Be $false
+            ($status.RuntimeVersions -contains '9.0.21') | Should Be $true
+            $status.Message | Should Match '9\.0\.21'
+            $status.Message | Should Match 'need the \.NET 10 runtime'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports the .NET runtime as missing when no runtime folder exists' {
+        $status = Get-IbisDotNetRuntimeStatus -DotNetRoot ([System.IO.Path]::Combine('E:\NoSuchDrive', 'dotnet'))
+        $status.Present | Should Be $false
+        $status.RuntimeVersions.Count | Should Be 0
+        $status.Message | Should Match 'No \.NET runtime was detected'
+    }
+
+    It 'orders runtime versions numerically rather than as text' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        foreach ($version in @('10.0.2', '10.0.13', '9.0.21')) {
+            New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($tempRoot, 'shared', 'Microsoft.NETCore.App', $version)) -Force | Out-Null
+        }
+
+        try {
+            $status = Get-IbisDotNetRuntimeStatus -DotNetRoot $tempRoot
+            $status.HighestRuntimeVersion | Should Be '10.0.13'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'treats a preview runtime folder as a usable runtime' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($tempRoot, 'shared', 'Microsoft.NETCore.App', '10.0.0-rc.2.25451.107')) -Force | Out-Null
+
+        try {
+            (Get-IbisDotNetRuntimeStatus -DotNetRoot $tempRoot).Present | Should Be $true
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'links to the matching Microsoft download page' {
+        (Get-IbisDotNetRuntimeStatus -DotNetRoot 'E:\NoSuchDrive\dotnet').MicrosoftUrl | Should Be 'https://dotnet.microsoft.com/download/dotnet/10.0'
+    }
+
+    It 'shows the .NET runtime beside the Visual C++ check in the runtime prerequisites step' {
+        $guiText = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'modules\Ibis.Gui.psm1') -Raw
+
+        $guiText | Should Match '\$dotNetStatusLabel'
+        $guiText | Should Match '\$runtimePrereqGroup\.Controls\.Add\(\$dotNetStatusLabel\)'
+        $guiText | Should Match '\$openDotNetPageButton\.Add_Click'
+        $guiText | Should Match 'Get-IbisDotNetRuntimeStatus'
+        # The step is only ready when both runtimes are present.
+        $guiText | Should Match '\$runtimeReady = \(\$vcStatus\.Present -and \$dotNetStatus\.Present\)'
+    }
+}
+
+Describe 'Ibis launcher' {
+    $projectRoot = Split-Path -Parent $PSScriptRoot
+    $launcherPath = Join-Path $projectRoot 'Ibis.cmd'
+
+    It 'ships a double-click launcher beside Run-Ibis.ps1' {
+        Test-Path -LiteralPath $launcherPath -PathType Leaf | Should Be $true
+    }
+
+    $launcherText = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { Get-Content -LiteralPath $launcherPath -Raw } else { '' }
+
+    It 'starts Run-Ibis.ps1 without changing the machine execution policy' {
+        # -ExecutionPolicy Bypass applies to the new process only, which is what
+        # saves the analyst from changing the policy by hand.
+        $launcherText | Should Match '-NoProfile -ExecutionPolicy Bypass -File'
+        $launcherText | Should Match 'Run-Ibis\.ps1'
+        $launcherText | Should Not Match 'Set-ExecutionPolicy'
+    }
+
+    It 'asks for Administrator rights before starting' {
+        # Defender exclusions and Windows long paths both need elevation.
+        $launcherText | Should Match 'fltmc'
+        $launcherText | Should Match '-Verb RunAs'
+    }
+
+    It 'still starts Ibis when elevation is declined' {
+        # The analyst stays in control: a declined UAC prompt must not block a
+        # read-only triage run.
+        $launcherText | Should Match 'IBIS_ELEVATED'
+        $launcherText | Should Match 'cannot add Defender exclusions'
+        $launcherText | Should Match '/noadmin'
+    }
+
+    It 'does not re-prompt for elevation in a loop' {
+        $launcherText | Should Match '/elevated'
+    }
+
+    It 'unblocks the launcher along with the PowerShell files' {
+        # A launcher still carrying the internet-origin mark raises a SmartScreen
+        # warning the moment the analyst double-clicks it, before Ibis can say
+        # anything. It is the first file touched, so it is unblocked with the rest.
+        $files = @(Get-IbisProjectScriptFile -ProjectRoot 'C:\Tools\Ibis')
+        ($files | Where-Object { $_ -like '*\Ibis.cmd' }).Count | Should Be 1
+        ($files | Where-Object { $_ -like '*\Run-Ibis.ps1' }).Count | Should Be 1
+    }
+
+    It 'keeps CRLF line endings so cmd.exe parses its labels' {
+        $bytes = [System.IO.File]::ReadAllBytes($launcherPath)
+        $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+        ([regex]::Matches($text, "`n").Count -gt 0) | Should Be $true
+        # Every newline must be part of a CRLF pair.
+        ([regex]::Matches($text, "`n").Count) | Should Be ([regex]::Matches($text, "`r`n").Count)
+    }
+}

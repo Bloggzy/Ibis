@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.5`
+Current version: `v0.7.6`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -17,6 +17,7 @@ Ibis is pre-1.0 beta software. The current version and default settings are stor
 - Windows analyst VM or workstation.
 - Windows PowerShell 5.1 or PowerShell 7.
 - Microsoft Visual C++ Redistributable 2015+ x64 for several native DFIR tools.
+- .NET 10 Desktop Runtime (x64) for the Eric Zimmerman tools. They ship as framework-dependent .NET 10 builds and will not start without it. Ibis checks for it under `Runtime prerequisites` on the `Setup tools` tab.
 - Internet access for tool downloads and GitHub latest-release checks, unless tools are installed manually.
 - Administrator rights if you want Ibis to add or remove Microsoft Defender exclusions.
 - A read-only mounted image or a working copy of a triage collection is strongly recommended.
@@ -47,19 +48,22 @@ If 7-Zip was installed as 32-bit on a 64-bit host, it is under `${env:ProgramFil
 
 Any archive tool that preserves this behaviour works. Only the built-in Windows extractor is a problem.
 
-### Option 2: Unblock the PowerShell files
+### Option 2: Unblock the Ibis files
 
-If you already extracted with the Windows extractor, unblock the three PowerShell files. From the project folder:
+If you already extracted with the Windows extractor, unblock the four Ibis files. From the project folder:
 
 ```powershell
-Get-ChildItem -Path .\Run-Ibis.ps1, .\modules\Ibis.Core.psm1, .\modules\Ibis.Gui.psm1 | Unblock-File
+Get-ChildItem -Path .\Ibis.cmd, .\Run-Ibis.ps1, .\modules\Ibis.Core.psm1, .\modules\Ibis.Gui.psm1 | Unblock-File
 ```
 
-The three files are:
+The four files are:
 
+- `Ibis.cmd`
 - `Run-Ibis.ps1`
 - `modules\Ibis.Core.psm1`
 - `modules\Ibis.Gui.psm1`
+
+`Ibis.cmd` is in the list because a marked launcher raises a SmartScreen warning the moment you double-click it.
 
 You can also right-click each file, choose `Properties`, tick `Unblock`, and click `OK`.
 
@@ -73,7 +77,13 @@ If the GUI does start, the `Setup tools` tab reports any remaining internet-orig
 
 ## Quick Start
 
-Extract the release as described in `Getting the Files` first, then from the project folder:
+Extract the release as described in `Getting the Files` first, then double-click `Ibis.cmd` in the project folder.
+
+`Ibis.cmd` saves you from opening a terminal and changing the execution policy by hand. It asks for Administrator rights first, because Defender exclusions and Windows long path support both need them. If you decline the prompt, Ibis still starts; only those two abilities are unavailable. Pass `/noadmin` to skip the prompt altogether.
+
+The launcher runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File Run-Ibis.ps1`. The `Bypass` applies to that one process. It does not change the machine or user execution policy.
+
+To start Ibis yourself instead, from the project folder:
 
 ```powershell
 .\Run-Ibis.ps1
@@ -301,12 +311,20 @@ Current tool set includes:
 
 Ibis supports direct downloads and GitHub latest-release downloads where configured. Installs are staged before publishing to avoid extracting over partial installs. Defender-sensitive tools are staged under their install directory rather than `%TEMP%` where possible, using short `_s\<id>\d` and `_s\<id>\x` staging paths to reduce path-length pressure.
 
-ZIP extraction tries PowerShell `Expand-Archive`, then a .NET fallback, then 7-Zip if `7z.exe` or `7za.exe` is available. The `Setup tools` tab also includes admin-only controls for the Windows `LongPathsEnabled` registry setting, which may require a restart before every process observes the change.
+ZIP extraction tries PowerShell `Expand-Archive`, then a .NET fallback, then 7-Zip if `7z.exe` or `7za.exe` is available. `.tar.gz` releases are extracted with the `tar.exe` that ships with Windows 10 1803 and later, falling back to 7-Zip.
+
+A tool that uses a GitHub latest-release download may list more than one asset name. Ibis tries them in order and takes the package type from the asset it matched, so an upstream rename or a change of archive format does not break the download. The `Setup tools` tab also includes admin-only controls for the Windows `LongPathsEnabled` registry setting, which may require a restart before every process observes the change.
 
 Some tools require the Microsoft Visual C++ Redistributable 2015+ x64 runtime. Ibis checks for it on the `Setup tools` tab and links to Microsoft's supported download page. On a fresh analyst VM, it can often be installed with:
 
 ```powershell
 winget install -e --id Microsoft.VCRedist.2015+.x64
+```
+
+The Eric Zimmerman tools need the .NET 10 Desktop Runtime (x64). Ibis checks for it in the same `Runtime prerequisites` step and links to Microsoft's download page. On a fresh analyst VM:
+
+```powershell
+winget install -e --id Microsoft.DotNet.DesktopRuntime.10
 ```
 
 Before downloads, Ibis checks that a fresh background PowerShell runspace can import its core module. The Setup tools tab also identifies execution-policy warnings and internet-origin marks on Ibis files. When a trusted local checkout is marked as downloaded from the internet, Ibis can remove that mark after confirmation. Ibis will not change execution policy or attempt to bypass Group Policy or application-control policy.
@@ -369,7 +387,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.5`, both test runs pass with `220` tests.
+As of `v0.7.6`, both test runs pass with `251` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 

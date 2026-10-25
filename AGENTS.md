@@ -6,12 +6,13 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.5`.
+Current version: `v0.7.6`.
 
 ## Build From Scratch Shape
 
 If starting again, build toward this structure:
 
+- `Ibis.cmd`: double-click launcher. Asks for elevation, then runs `Run-Ibis.ps1` with a process-only execution policy. Keep it CRLF, ASCII, and able to start Ibis when elevation is declined.
 - `Run-Ibis.ps1`: thin launcher.
 - `config.json`: app metadata, defaults, completion setting, and processing module metadata.
 - `CHANGELOG.md`: release history.
@@ -136,18 +137,23 @@ Current tool set includes:
 
 Use staged installs. Do not extract directly over an existing install.
 
-For shared install directories such as `EZTools\net9`, back up only conflicting staged items, not the whole shared folder.
+For shared install directories such as `EZTools\net10`, back up only conflicting staged items, not the whole shared folder. Match the folder as `EZTools\net*` so the next framework move needs no code change.
 
 Prefer staging under the final install directory for Defender-sensitive tools. Chainsaw, Hayabusa, Takajo, and rule-heavy archives can trigger Defender if extracted under `%TEMP%`. Use short staging paths such as `_s\<id>\d` and `_s\<id>\x` to reduce long-path extraction failures.
 
 Support `.NET` ZIP extraction fallback because `Expand-Archive` can fail when the local `Microsoft.PowerShell.Archive` resources are damaged. If both PowerShell and .NET extraction fail, try 7-Zip when available.
 
+Support `.tar.gz` and `.tgz` with the `tar.exe` that ships with Windows 10 1803 and later, falling back to 7-Zip in two passes.
+
+A GitHub latest-release tool may list several `assetPattern` values. Try them in order, newest name first, so an upstream rename does not stop the download, and say which assets the release actually has when none match. Such a tool may omit `packageType`; `Resolve-IbisToolPackageType` then takes it from the matched asset. A tool with a fixed `downloadUrl` must still declare `packageType`.
+
 Check for partial installs. If files exist but the expected executable is missing, report `Install Incomplete`.
 
 Known layout quirks:
 
-- EvtxECmd has its own `EZTools\net9\EvtxECmd` subfolder.
-- Most other current EZTools sit directly under `EZTools\net9`.
+- EvtxECmd has its own `EZTools\net10\EvtxECmd` subfolder.
+- Most other current EZTools sit directly under `EZTools\net10`.
+- EZTools are framework-dependent .NET 10 builds downloaded from `https://download.ericzimmermanstools.com/net/<Tool>.zip`. The download path carries no framework version, so a future move changes the install folder only.
 - Chainsaw may require renaming a platform-specific executable to the configured expected executable.
 - Takajo will not write to an existing output folder, so back up the folder first.
 
@@ -179,6 +185,7 @@ GUI behaviour:
 - Include an Open tools folder button that is enabled only when the folder exists.
 - Include admin-only Windows long path support enable/disable controls.
 - Include a Visual C++ Redistributable 2015+ x64 prerequisite check and link to Microsoft's supported download page.
+- Include a .NET runtime prerequisite check with `Get-IbisDotNetRuntimeStatus` and link to Microsoft's download page. EZTools are framework-dependent, so a missing runtime makes every one of them fail with an error that does not mention Ibis. The runtime step is ready only when both prerequisites are present. Keep the minimum major version a parameter, not a hard-coded number.
 - Tool management buttons include `Recheck Tools`, `Download Missing Tools`, `Guidance`, and `Update Hayabusa Rules`.
 - Defender controls include check/add/remove exclusions and admin-aware enablement.
 - Run tools groups source, output, hostname, and processing modules.

@@ -1,10 +1,10 @@
 {
   "id": "zimmerman-sbecmd",
   "name": "Eric Zimmerman's SBECmd",
-  "executablePath": "EZTools\\net9\\SBECmd.exe",
-  "installDirectory": "EZTools\\net9",
+  "executablePath": "EZTools\\net10\\SBECmd.exe",
+  "installDirectory": "EZTools\\net10",
   "packageType": "zip",
-  "downloadUrl": "https://download.ericzimmermanstools.com/net9/SBECmd.zip",
+  "downloadUrl": "https://download.ericzimmermanstools.com/net/SBECmd.zip",
   "manualUrl": "https://ericzimmerman.github.io/#!index.md",
   "notes": "Used for parsing ShellBags."
 }

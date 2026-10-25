@@ -3,10 +3,12 @@
   "name": "DuckDB CLI",
   "executablePath": "DuckDB\\duckdb.exe",
   "installDirectory": "DuckDB",
-  "packageType": "zip",
   "downloadUrl": "latest-release",
   "githubRepo": "duckdb/duckdb",
-  "assetPattern": "duckdb_cli-windows-amd64.zip",
+  "assetPattern": [
+    "duckdb-cli-windows-amd64.tar.gz",
+    "duckdb_cli-windows-amd64.zip"
+  ],
   "manualUrl": "https://github.com/duckdb/duckdb/releases/latest",
-  "notes": "Used for CSV post-processing and event log summaries."
+  "notes": "Used for CSV post-processing and event log summaries. DuckDB 2.0.0 renamed the Windows CLI asset and switched it to .tar.gz, so both asset names are listed and the package type is taken from the resolved URL."
 }

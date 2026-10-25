@@ -1796,7 +1796,7 @@ function Show-IbisGui {
     $runtimePrereqGroup = New-Object System.Windows.Forms.GroupBox
     $runtimePrereqGroup.Text = $setupStepTitles.Runtime
     $runtimePrereqGroup.Location = New-Object System.Drawing.Point(12, 276)
-    $runtimePrereqGroup.Size = New-Object System.Drawing.Size(368, 44)
+    $runtimePrereqGroup.Size = New-Object System.Drawing.Size(368, 76)
     $setupTab.Controls.Add($runtimePrereqGroup)
 
     $vcRedistStatusLabel = New-Object System.Windows.Forms.Label
@@ -1811,10 +1811,25 @@ function Show-IbisGui {
     $openVcRedistPageButton.Width = 112
     $runtimePrereqGroup.Controls.Add($openVcRedistPageButton)
 
+    # The Eric Zimmerman tools are framework-dependent .NET 10 builds. Without
+    # the runtime every one of them exits immediately with a framework error
+    # that does not mention Ibis, so the analyst needs to see this here.
+    $dotNetStatusLabel = New-Object System.Windows.Forms.Label
+    $dotNetStatusLabel.Location = New-Object System.Drawing.Point(12, 48)
+    $dotNetStatusLabel.Size = New-Object System.Drawing.Size(220, 18)
+    $dotNetStatusLabel.Text = 'Checking .NET runtime...'
+    $runtimePrereqGroup.Controls.Add($dotNetStatusLabel)
+
+    $openDotNetPageButton = New-Object System.Windows.Forms.Button
+    $openDotNetPageButton.Text = 'Microsoft page'
+    $openDotNetPageButton.Location = New-Object System.Drawing.Point(244, 44)
+    $openDotNetPageButton.Width = 112
+    $runtimePrereqGroup.Controls.Add($openDotNetPageButton)
+
     $toolActionsGroup = New-Object System.Windows.Forms.GroupBox
     $toolActionsGroup.Text = $setupStepTitles.Tools
     $toolActionsGroup.Location = New-Object System.Drawing.Point(394, 76)
-    $toolActionsGroup.Size = New-Object System.Drawing.Size(362, 244)
+    $toolActionsGroup.Size = New-Object System.Drawing.Size(362, 276)
     $setupTab.Controls.Add($toolActionsGroup)
 
     $checkToolsButton = New-Object System.Windows.Forms.Button
@@ -1856,7 +1871,7 @@ function Show-IbisGui {
     $downloadReadinessLabel.Text = 'Checking Defender exclusions...'
     $toolActionsGroup.Controls.Add($downloadReadinessLabel)
     $toolList = New-Object System.Windows.Forms.ListView
-    $toolList.Location = New-Object System.Drawing.Point(12, 326)
+    $toolList.Location = New-Object System.Drawing.Point(12, 358)
     $toolList.Size = New-Object System.Drawing.Size(744, 140)
     $toolList.View = 'Details'
     $toolList.FullRowSelect = $true
@@ -1867,7 +1882,7 @@ function Show-IbisGui {
     $setupTab.Controls.Add($toolList)
 
     $toolGuidanceTextBox = New-Object System.Windows.Forms.TextBox
-    $toolGuidanceTextBox.Location = New-Object System.Drawing.Point(12, 478)
+    $toolGuidanceTextBox.Location = New-Object System.Drawing.Point(12, 510)
     $toolGuidanceTextBox.Size = New-Object System.Drawing.Size(744, 198)
     $toolGuidanceTextBox.Multiline = $true
     $toolGuidanceTextBox.ScrollBars = 'Vertical'
@@ -1875,7 +1890,7 @@ function Show-IbisGui {
     $setupTab.Controls.Add($toolGuidanceTextBox)
 
     $toolHelp = New-Object System.Windows.Forms.Label
-    $toolHelp.Location = New-Object System.Drawing.Point(12, 688)
+    $toolHelp.Location = New-Object System.Drawing.Point(12, 720)
     $toolHelp.Size = New-Object System.Drawing.Size(744, 40)
     $toolHelp.Text = 'Missing tools are not downloaded yet. The guidance view shows where each missing tool is expected and where it can be obtained.'
     $setupTab.Controls.Add($toolHelp)
@@ -2357,7 +2372,7 @@ function Show-IbisGui {
         & $setSetupStepState $longPathsGroup $setupStepTitles.LongPaths $(if ($longPathsEnabled) { 'Ready' } else { 'Attention' })
     }
 
-    $updateVcRedistStatus = {
+    $updateRuntimePrereqStatus = {
         $vcStatus = Get-IbisVisualCppRedistributableStatus -Architecture 'x64'
         if ($vcStatus.Present) {
             $vcRedistStatusLabel.Text = 'VC++ 2015+ x64 detected'
@@ -2367,8 +2382,25 @@ function Show-IbisGui {
             $vcRedistStatusLabel.Text = 'VC++ 2015+ x64 missing'
             $vcRedistStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
         }
-        & $setSetupStepState $runtimePrereqGroup $setupStepTitles.Runtime $(if ($vcStatus.Present) { 'Ready' } else { 'Attention' })
-        $vcStatus
+
+        $dotNetStatus = Get-IbisDotNetRuntimeStatus
+        if ($dotNetStatus.Present) {
+            $dotNetStatusLabel.Text = '.NET {0} runtime detected' -f $dotNetStatus.MinimumMajorVersion
+            $dotNetStatusLabel.ForeColor = [System.Drawing.Color]::DarkGreen
+        }
+        else {
+            $dotNetStatusLabel.Text = '.NET {0} runtime missing' -f $dotNetStatus.MinimumMajorVersion
+            $dotNetStatusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+        }
+
+        $runtimeReady = ($vcStatus.Present -and $dotNetStatus.Present)
+        & $setSetupStepState $runtimePrereqGroup $setupStepTitles.Runtime $(if ($runtimeReady) { 'Ready' } else { 'Attention' })
+
+        [pscustomobject]@{
+            VisualCpp = $vcStatus
+            DotNet = $dotNetStatus
+            Ready = $runtimeReady
+        }
     }
 
     $updatePowerShellReadiness = {
@@ -2453,7 +2485,7 @@ function Show-IbisGui {
 
     & $setDefenderControlsForAdmin
     & $updateToolsFolderButtonState
-    [void](& $updateVcRedistStatus)
+    [void](& $updateRuntimePrereqStatus)
     [void](& $updatePowerShellReadiness)
     [void](& $updateDownloadReadiness)
 
@@ -2509,7 +2541,7 @@ function Show-IbisGui {
 
     $refreshToolStatusList = {
         & $updateToolsFolderButtonState
-        $vcStatus = & $updateVcRedistStatus
+        $runtimeStatus = & $updateRuntimePrereqStatus
         $toolList.Items.Clear()
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
         foreach ($status in $statuses) {
@@ -2529,9 +2561,14 @@ function Show-IbisGui {
         $missing = @($statuses | Where-Object { -not $_.Present })
         $statusLabel.Text = "$($statuses.Count) tools checked; $($missing.Count) missing"
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $statusLabel.Text
-        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $vcStatus.Message
-        if (-not $vcStatus.Present) {
-            Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Warning: $($vcStatus.Message)`r`nInstall with winget if available: winget install -e --id Microsoft.VCRedist.2015+.x64`r`n" -StripAnsi
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $runtimeStatus.VisualCpp.Message
+        if (-not $runtimeStatus.VisualCpp.Present) {
+            Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Warning: $($runtimeStatus.VisualCpp.Message)`r`nInstall with winget if available: winget install -e --id Microsoft.VCRedist.2015+.x64`r`n" -StripAnsi
+        }
+
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $runtimeStatus.DotNet.Message
+        if (-not $runtimeStatus.DotNet.Present) {
+            Add-IbisTextBoxDisplayText -TextBox $toolGuidanceTextBox -Text "Warning: $($runtimeStatus.DotNet.Message)`r`nDownload page: $($runtimeStatus.DotNet.MicrosoftUrl)`r`nInstall with winget if available: winget install -e --id Microsoft.DotNet.DesktopRuntime.$($runtimeStatus.DotNet.MinimumMajorVersion)`r`n" -StripAnsi
         }
     }
 
@@ -2718,6 +2755,12 @@ function Show-IbisGui {
         $vcStatus = Get-IbisVisualCppRedistributableStatus -Architecture 'x64'
         Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Opening Visual C++ Redistributable page: $($vcStatus.MicrosoftUrl)"
         Start-Process -FilePath $vcStatus.MicrosoftUrl
+    })
+
+    $openDotNetPageButton.Add_Click({
+        $dotNetStatus = Get-IbisDotNetRuntimeStatus
+        Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message "Opening .NET runtime download page: $($dotNetStatus.MicrosoftUrl)"
+        Start-Process -FilePath $dotNetStatus.MicrosoftUrl
     })
 
     $sourceBrowseButton.Add_Click({

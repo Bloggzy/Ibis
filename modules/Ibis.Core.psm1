@@ -422,19 +422,76 @@ function Resolve-IbisToolDownloadUrl {
         throw "$($ToolDefinition.name) uses latest-release but has no githubRepo metadata."
     }
 
-    if ([string]::IsNullOrWhiteSpace($ToolDefinition.assetPattern)) {
+    $assetPatterns = @(Get-IbisToolAssetPattern -ToolDefinition $ToolDefinition)
+    if ($assetPatterns.Count -eq 0) {
         throw "$($ToolDefinition.name) uses latest-release but has no assetPattern metadata."
     }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $apiUrl = 'https://api.github.com/repos/{0}/releases/latest' -f $ToolDefinition.githubRepo
     $release = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing
-    $asset = $release.assets | Where-Object { $_.name -like $ToolDefinition.assetPattern } | Select-Object -First 1
-    if ($null -eq $asset) {
-        throw "No GitHub release asset matching '$($ToolDefinition.assetPattern)' was found for $($ToolDefinition.githubRepo)."
+
+    # Patterns are tried in order so a tool definition can list the current asset
+    # name first and earlier names after it. Upstream projects rename release
+    # assets (DuckDB went from duckdb_cli-windows-amd64.zip to
+    # duckdb-cli-windows-amd64.tar.gz), and a single hard-coded name turns that
+    # rename into a download failure the analyst cannot fix from the GUI.
+    foreach ($assetPattern in $assetPatterns) {
+        $asset = $release.assets | Where-Object { $_.name -like $assetPattern } | Select-Object -First 1
+        if ($asset) {
+            return $asset.browser_download_url
+        }
     }
 
-    $asset.browser_download_url
+    $availableNames = @($release.assets | ForEach-Object { $_.name }) -join ', '
+    $patternText = ($assetPatterns | ForEach-Object { "'$_'" }) -join ', '
+    throw "No GitHub release asset matching $patternText was found for $($ToolDefinition.githubRepo). Assets in the latest release: $availableNames"
+}
+
+function Get-IbisToolAssetPattern {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ToolDefinition
+    )
+
+    # assetPattern may be a single string or an ordered list of strings.
+    @(@($ToolDefinition.assetPattern) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+}
+
+function Resolve-IbisToolPackageType {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ToolDefinition,
+
+        [string]$DownloadUrl
+    )
+
+    $packageType = [string]$ToolDefinition.packageType
+    if (-not [string]::IsNullOrWhiteSpace($packageType)) {
+        return $packageType.ToLowerInvariant()
+    }
+
+    # With no declared packageType, the resolved URL decides. This lets a
+    # latest-release tool switch archive format upstream without an edit here.
+    $path = $DownloadUrl
+    if (-not [string]::IsNullOrWhiteSpace($path)) {
+        try {
+            $path = ([uri]$DownloadUrl).AbsolutePath
+        }
+        catch {
+        }
+    }
+
+    if ($path -like '*.tar.gz' -or $path -like '*.tgz') {
+        return 'tar.gz'
+    }
+    if ($path -like '*.zip') {
+        return 'zip'
+    }
+
+    'file'
 }
 
 function Get-IbisToolInstallDirectory {
@@ -968,6 +1025,81 @@ function Expand-IbisArchive {
     }
 }
 
+function Get-IbisTarPath {
+    [CmdletBinding()]
+    param()
+
+    # Windows 10 1803 and later ship bsdtar as tar.exe under System32, so a
+    # .tar.gz release asset needs no extra tool on a current analyst VM.
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace(${env:SystemRoot})) {
+        $candidates += [System.IO.Path]::Combine(${env:SystemRoot}, 'System32', 'tar.exe')
+    }
+    $command = Get-Command 'tar.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) {
+        $candidates += $command.Source
+    }
+
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    $null
+}
+
+function Expand-IbisTarArchive {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LiteralPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $DestinationPath -PathType Container)) {
+        New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    }
+
+    $tarPath = Get-IbisTarPath
+    $tarError = 'tar.exe was not found on this machine.'
+    if (-not [string]::IsNullOrWhiteSpace($tarPath)) {
+        $result = Invoke-IbisProcessCapture `
+            -FilePath $tarPath `
+            -ArgumentList @('-x', '-f', $LiteralPath, '-C', $DestinationPath) `
+            -WorkingDirectory $DestinationPath
+
+        if ($result.ExitCode -eq 0) {
+            return
+        }
+
+        $tarError = "tar.exe exited with code $($result.ExitCode). $($result.StandardError)"
+    }
+
+    # 7-Zip needs two passes for a .tar.gz: one to produce the .tar, one to
+    # unpack it. Keep the intermediate beside the download, not in the
+    # destination, so the staged publish step only sees real tool files.
+    $sevenZipPath = Get-IbisSevenZipPath
+    if ([string]::IsNullOrWhiteSpace($sevenZipPath)) {
+        throw "Unable to extract TAR archive. $tarError 7-Zip was not available either. Install 7-Zip, then retry."
+    }
+
+    $intermediateRoot = Join-Path (Split-Path -Path $LiteralPath -Parent) '_tar'
+    if (-not (Test-Path -LiteralPath $intermediateRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $intermediateRoot -Force | Out-Null
+    }
+
+    Expand-IbisArchiveWithSevenZip -LiteralPath $LiteralPath -DestinationPath $intermediateRoot
+    $tarFile = @(Get-ChildItem -LiteralPath $intermediateRoot -Filter '*.tar' -File -Force) | Select-Object -First 1
+    if ($null -eq $tarFile) {
+        throw "Unable to extract TAR archive. $tarError 7-Zip did not produce a .tar file from $LiteralPath."
+    }
+
+    Expand-IbisArchiveWithSevenZip -LiteralPath $tarFile.FullName -DestinationPath $DestinationPath
+}
+
 function Get-IbisLongPathsEnabled {
     [CmdletBinding()]
     param()
@@ -1074,6 +1206,131 @@ function Get-IbisVisualCppRedistributableStatus {
     }
 }
 
+function Get-IbisDotNetRuntimeRoot {
+    [CmdletBinding()]
+    param()
+
+    # DOTNET_ROOT wins because an analyst VM can place the shared runtime outside
+    # Program Files. The 64-bit install is what matters: the Eric Zimmerman tools
+    # ship as 64-bit framework-dependent builds.
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace(${env:DOTNET_ROOT})) {
+        $candidates += ${env:DOTNET_ROOT}
+    }
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles})) {
+        $candidates += [System.IO.Path]::Combine(${env:ProgramFiles}, 'dotnet')
+    }
+    $candidates += 'C:\Program Files\dotnet'
+
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return $candidate
+        }
+    }
+
+    $null
+}
+
+function Get-IbisDotNetSharedRuntimeVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$DotNetRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FrameworkName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DotNetRoot)) {
+        return @()
+    }
+
+    # Use Combine rather than Join-Path so a configured root on a drive that is
+    # not present does not throw. Tests rely on that for offline paths.
+    $frameworkRoot = [System.IO.Path]::Combine($DotNetRoot, 'shared', $FrameworkName)
+    if (-not (Test-Path -LiteralPath $frameworkRoot -PathType Container)) {
+        return @()
+    }
+
+    $versions = @()
+    foreach ($directory in @(Get-ChildItem -LiteralPath $frameworkRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        # A preview folder such as 10.0.0-rc.2.25451.107 is still a usable
+        # runtime, so keep the numeric part and ignore the suffix.
+        $numericPart = ($directory.Name -split '-', 2)[0]
+        $parsed = $null
+        if ([Version]::TryParse($numericPart, [ref]$parsed)) {
+            $versions += [pscustomobject]@{
+                Name = $directory.Name
+                Version = $parsed
+                Major = $parsed.Major
+                Path = $directory.FullName
+            }
+        }
+    }
+
+    @($versions | Sort-Object -Property Version)
+}
+
+function Get-IbisDotNetRuntimeStatus {
+    [CmdletBinding()]
+    param(
+        # The Eric Zimmerman tools moved from .NET 9 to .NET 10 builds, and the
+        # download site now serves one framework-dependent build per tool. The
+        # minimum is a parameter so a later move does not need a code change.
+        [int]$MinimumMajorVersion = 10,
+
+        # Supplying a root lets tests cover present, old-only, and missing
+        # outcomes without installing or removing a real .NET runtime.
+        [string]$DotNetRoot
+    )
+
+    if (-not $PSBoundParameters.ContainsKey('DotNetRoot')) {
+        $DotNetRoot = Get-IbisDotNetRuntimeRoot
+    }
+
+    $consoleVersions = @(Get-IbisDotNetSharedRuntimeVersion -DotNetRoot $DotNetRoot -FrameworkName 'Microsoft.NETCore.App')
+    $desktopVersions = @(Get-IbisDotNetSharedRuntimeVersion -DotNetRoot $DotNetRoot -FrameworkName 'Microsoft.WindowsDesktop.App')
+
+    $matchingConsole = @($consoleVersions | Where-Object { $_.Major -ge $MinimumMajorVersion })
+    $matchingDesktop = @($desktopVersions | Where-Object { $_.Major -ge $MinimumMajorVersion })
+    $present = ($matchingConsole.Count -gt 0)
+
+    $highest = $null
+    if ($consoleVersions.Count -gt 0) {
+        $highest = [string]$consoleVersions[-1].Name
+    }
+
+    $downloadUrl = 'https://dotnet.microsoft.com/download/dotnet/{0}.0' -f $MinimumMajorVersion
+
+    if ($present) {
+        $message = ".NET {0} runtime detected ({1})." -f $MinimumMajorVersion, (@($matchingConsole | ForEach-Object { $_.Name }) -join ', ')
+    }
+    elseif ($consoleVersions.Count -gt 0) {
+        # This is the common state right after Eric Zimmerman's move to .NET 10:
+        # the VM has an older runtime, so every EZTool starts and then exits with
+        # a framework-missing error that does not mention Ibis.
+        $message = ".NET {0} runtime was not detected. Installed runtimes: {1}. Eric Zimmerman's tools need the .NET {0} runtime and will not start without it." -f $MinimumMajorVersion, (@($consoleVersions | ForEach-Object { $_.Name }) -join ', ')
+    }
+    else {
+        $message = "No .NET runtime was detected. Eric Zimmerman's tools need the .NET {0} Desktop Runtime (x64) and will not start without it." -f $MinimumMajorVersion
+    }
+
+    [pscustomobject]@{
+        Present = $present
+        MinimumMajorVersion = $MinimumMajorVersion
+        DotNetRoot = $DotNetRoot
+        RuntimeVersions = @($consoleVersions | ForEach-Object { $_.Name })
+        DesktopRuntimeVersions = @($desktopVersions | ForEach-Object { $_.Name })
+        MatchingRuntimeVersions = @($matchingConsole | ForEach-Object { $_.Name })
+        MatchingDesktopRuntimeVersions = @($matchingDesktop | ForEach-Object { $_.Name })
+        HighestRuntimeVersion = $highest
+        MicrosoftUrl = $downloadUrl
+        Message = $message
+    }
+}
+
 function Get-IbisProjectScriptFile {
     [CmdletBinding()]
     param(
@@ -1081,7 +1338,12 @@ function Get-IbisProjectScriptFile {
         [string]$ProjectRoot
     )
 
+    # Ibis.cmd is listed with the scripts because it carries the same
+    # internet-origin mark after a Windows Explorer extraction, and it is the
+    # first thing the analyst double-clicks. Left marked, it raises a SmartScreen
+    # warning before Ibis gets a chance to explain anything.
     @(
+        (Join-Path $ProjectRoot 'Ibis.cmd'),
         (Join-Path $ProjectRoot 'Run-Ibis.ps1'),
         (Join-Path $ProjectRoot 'modules\Ibis.Core.psm1'),
         (Join-Path $ProjectRoot 'modules\Ibis.Gui.psm1')
@@ -1200,7 +1462,7 @@ function Get-IbisPowerShellReadiness {
 
     $markedFiles = @($fileStatuses | Where-Object { $_.HasZoneIdentifier })
     if ($markedFiles.Count -gt 0) {
-        $guidance += "$($markedFiles.Count) Ibis PowerShell file(s) are marked as downloaded from the internet. After verifying this trusted checkout, use Unblock Ibis Files."
+        $guidance += "$($markedFiles.Count) Ibis file(s) are marked as downloaded from the internet. After verifying this trusted checkout, use Unblock Ibis Files."
     }
     if (-not $backgroundImport.Passed) {
         $guidance += "Background PowerShell import failed: $($backgroundImport.ErrorMessage)"
@@ -1459,7 +1721,7 @@ function Clear-IbisToolPreviousInstall {
             }
         }
     }
-    elseif ($ToolDefinition.installDirectory -like 'EZTools\net9*') {
+    elseif ($ToolDefinition.installDirectory -like 'EZTools\net*') {
         $expectedPath = Get-IbisToolExpectedPath -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
         if (Test-Path -LiteralPath $expectedPath) {
             $items += Get-Item -LiteralPath $expectedPath -Force
@@ -1646,15 +1908,7 @@ function Invoke-IbisInstallTool {
     $downloadUrl = Resolve-IbisToolDownloadUrl -ToolDefinition $ToolDefinition
     $installDirectory = Get-IbisToolInstallDirectory -ToolsRoot $ToolsRoot -ToolDefinition $ToolDefinition
     $backupPath = $null
-    $packageType = $ToolDefinition.packageType
-    if ([string]::IsNullOrWhiteSpace($packageType)) {
-        if ($downloadUrl -like '*.zip') {
-            $packageType = 'zip'
-        }
-        else {
-            $packageType = 'file'
-        }
-    }
+    $packageType = Resolve-IbisToolPackageType -ToolDefinition $ToolDefinition -DownloadUrl $downloadUrl
 
     if ($PSCmdlet.ShouldProcess($ToolDefinition.name, "Download and install to $installDirectory")) {
         if (-not (Test-Path -LiteralPath $ToolsRoot)) {
@@ -1680,6 +1934,10 @@ function Invoke-IbisInstallTool {
             if ($packageType -eq 'zip') {
                 Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'Extract' -Message 'Extracting ZIP archive.' -Index $ProgressIndex -Total $ProgressTotal
                 Expand-IbisArchive -LiteralPath $downloadPath -DestinationPath $workspace.ExtractDirectory
+            }
+            elseif ($packageType -eq 'tar.gz') {
+                Write-IbisProgressEvent -ProgressPath $ProgressPath -ToolId $ToolDefinition.id -ToolName $ToolDefinition.name -Stage 'Extract' -Message 'Extracting TAR archive.' -Index $ProgressIndex -Total $ProgressTotal
+                Expand-IbisTarArchive -LiteralPath $downloadPath -DestinationPath $workspace.ExtractDirectory
             }
             elseif ($packageType -eq 'file') {
                 $targetName = $ToolDefinition.downloadFileName
@@ -7725,10 +7983,18 @@ Export-ModuleMember -Function Add-IbisDefenderExclusion
 Export-ModuleMember -Function Remove-IbisDefenderExclusion
 Export-ModuleMember -Function Get-IbisSevenZipPath
 Export-ModuleMember -Function Expand-IbisArchive
+Export-ModuleMember -Function Get-IbisTarPath
+Export-ModuleMember -Function Expand-IbisTarArchive
+Export-ModuleMember -Function Get-IbisToolAssetPattern
+Export-ModuleMember -Function Resolve-IbisToolPackageType
 Export-ModuleMember -Function Get-IbisLongPathsEnabled
 Export-ModuleMember -Function Set-IbisLongPathsEnabled
 Export-ModuleMember -Function Get-IbisVisualCppRedistributableStatus
+Export-ModuleMember -Function Get-IbisDotNetRuntimeRoot
+Export-ModuleMember -Function Get-IbisDotNetSharedRuntimeVersion
+Export-ModuleMember -Function Get-IbisDotNetRuntimeStatus
 Export-ModuleMember -Function Get-IbisPowerShellReadiness
+Export-ModuleMember -Function Get-IbisProjectScriptFile
 Export-ModuleMember -Function Unblock-IbisProjectScriptFile
 Export-ModuleMember -Function New-IbisToolInstallWorkspace
 Export-ModuleMember -Function Remove-IbisEmptyToolWorkspaceDirectory

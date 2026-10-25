@@ -4,6 +4,19 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.6 - 2026-10-25
+
+- Eric Zimmerman moved his tools to .NET 10 and changed the download path. The old `net9` path now returns 404, so every Eric Zimmerman download failed. All eleven tool definitions now download from `https://download.ericzimmermanstools.com/net/<Tool>.zip` and install under `EZTools\net10`. Tools already installed under `EZTools\net9` are reported as missing; download them again and delete the old folder when you are satisfied with the new one.
+- The shared-install rule that stops one EZTool backing up another now matches any `EZTools\net*` folder, so the next framework move needs no code change.
+- Added a `.NET 10` runtime check to `Runtime prerequisites` on the `Setup tools` tab, beside the Visual C++ check, with its own link to Microsoft's download page. The Eric Zimmerman tools are framework-dependent builds, so without the runtime every one of them exits immediately with a framework error that does not mention Ibis. The step shows ready only when both runtimes are present, and the missing runtime is written to the run log and the guidance box with a `winget` command.
+- Fixed the DuckDB download, which failed with `No GitHub release asset matching 'duckdb_cli-windows-amd64.zip' was found for duckdb/duckdb`. DuckDB 2.0.0 renamed the Windows CLI asset to `duckdb-cli-windows-amd64.tar.gz` and changed it from ZIP to tar.gz.
+- A tool definition may now list several asset names for a GitHub latest-release download. Ibis tries them in order, so an upstream rename no longer stops the download. The failure message also lists the assets the release actually has.
+- A latest-release tool may now leave out `packageType`. Ibis takes it from the asset it matched, so a change of archive format is absorbed without an edit. DuckDB uses this.
+- Added `.tar.gz` and `.tgz` extraction, using the `tar.exe` that ships with Windows 10 1803 and later, falling back to 7-Zip in two passes.
+- Added `Ibis.cmd`, a double-click launcher. It saves the analyst from opening a terminal, changing the execution policy, and typing the script path. It asks for Administrator rights first, because Defender exclusions and Windows long path support need them, and still starts Ibis if the prompt is declined, saying which two abilities are unavailable. `/noadmin` skips the prompt, `/elevated` is the internal marker that stops an elevation loop. The `-ExecutionPolicy Bypass` applies to the launched process only and changes nothing on the machine.
+- `Ibis.cmd` is now unblocked along with the PowerShell files, by `Unblock Ibis Files` on the `Setup tools` tab and by the README command. A launcher still carrying the internet-origin mark raises a SmartScreen warning the moment it is double-clicked, before Ibis can explain anything.
+- The `Setup tools` tab grew the runtime prerequisites group by one row and moved the tool list, guidance box, and help text down to match.
+
 ## v0.7.5 - 2026-08-20
 
 - Added Boobook as a processing module. It parses USB artefacts into a self-contained analyst report, plus CSV and JSONL of every device, event, and correlation. Ibis runs it with `-in-place` so the results land in `USB\Boobook` rather than a run directory Ibis did not name, and moves any earlier result into `USB\_Boobook-Output-Backups` first, because Boobook refuses to write into a folder that already holds anything.
