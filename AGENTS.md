@@ -6,7 +6,7 @@ Ibis is a Windows PowerShell DFIR orchestration tool. It prepares common forensi
 
 The project is a fresh build from scratch. It utilises proven analyst workflow knowledge, command lines, and edge cases while keeping the implementation maintainable, testable, and extendable.
 
-Current version: `v0.7.7`.
+Current version: `v0.7.8`.
 
 ## Build From Scratch Shape
 
@@ -241,7 +241,7 @@ Within a module, avoid stopping all artefacts because one source, parser, rename
 - Amcache: prepare `Amcache.hve`, run AmcacheParser and RegRipper variants.
 - AppCompatCache: prepare SYSTEM hive and run AppCompatCacheParser.
 - Prefetch: run PECmd and rename timestamped output.
-- NTFS Metadata: locate `$MFT` and `$UsnJrnl:$J` across mounted roots and Velociraptor NTFS uploads; run MFTECmd.
+- NTFS Metadata: locate `$MFT` and `$UsnJrnl:$J` across mounted roots and Velociraptor NTFS uploads; run MFTECmd once as `-f $J -m $MFT` and rename the timestamped `$MFT` CSV it also writes (MFTECmd 2026.10 and later). Run a separate `$MFT` pass only when that pass leaves no `$MFT` CSV: older MFTECmd, a failed pass, or no usable `$J`. Never run both passes unconditionally, because the second leaves a duplicate `$MFT` CSV of hundreds of MB. Skip a zero-byte `$J` with a message.
 - SRUM: run SrumECmd with SRUDB.dat and prepared SOFTWARE hive; rename timestamped output.
 - User Artefacts: process all profiles, including default/system profiles; avoid duplicate folder nesting such as `PSReadLine\PSReadLine`; record per-user/per-artefact failed and skipped results and continue through later artefacts/profiles after a failure; emit progress/log records in user order as each artefact step finishes; run JLECmd once per jump list folder (`Recent\AutomaticDestinations`, `Recent\CustomDestinations`), each into its own output folder, never against `Recent` itself, because JLECmd 2026.10 tries to parse the folders and `desktop.ini` there and exits 1.
 - Event Logs: run EvtxECmd.

@@ -165,6 +165,81 @@ function Test-IbisToolStatus {
     }
 }
 
+function Get-IbisToolSetSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$ToolStatuses,
+
+        # The Defender step state. Downloading without exclusions is the common
+        # failure, so step 5 is not ready until step 2 is.
+        [ValidateSet('Ready', 'Attention', 'Blocked', 'Unknown')]
+        [string]$DefenderState = 'Unknown'
+    )
+
+    # The tool list is taller than its box. A missing tool must not depend on
+    # the analyst scrolling to find it, so problems sort first and the step
+    # heading reports the count.
+    # 'Missing' means nothing is there. Any other status without the expected
+    # executable (Partial, Needs Normalization, Ambiguous Existing Versions,
+    # Install Incomplete) means files are there but Ibis cannot run the tool, so
+    # it is just as unusable and is reported apart only so the fix is clear.
+    $isNotInstalled = { param($Status) (-not $Status.Present) -and ([string]::IsNullOrWhiteSpace([string]$Status.Status) -or [string]$Status.Status -in @('Missing', 'Definition Error')) }
+    $isUnusable = { param($Status) (-not $Status.Present) -and -not (& $isNotInstalled $Status) }
+
+    $index = 0
+    $ranked = foreach ($status in $ToolStatuses) {
+        $rank = if ($status.Present) { 2 } elseif (& $isUnusable $status) { 1 } else { 0 }
+        [pscustomobject]@{ Rank = $rank; Index = $index; Status = $status }
+        $index++
+    }
+    $sorted = @($ranked | Sort-Object Rank, Index | ForEach-Object { $_.Status })
+
+    $total = @($ToolStatuses).Count
+    $missingCount = @($ToolStatuses | Where-Object { & $isNotInstalled $_ }).Count
+    $incompleteCount = @($ToolStatuses | Where-Object { & $isUnusable $_ }).Count
+    $presentCount = $total - $missingCount - $incompleteCount
+
+    $parts = @()
+    if ($missingCount -gt 0) {
+        $parts += "$missingCount of $total tools missing."
+    }
+    if ($incompleteCount -gt 0) {
+        $noun = if ($incompleteCount -eq 1) { 'tool has' } else { 'tools have' }
+        $parts += "$incompleteCount $noun files but cannot run (see Status)."
+    }
+
+    if ($total -eq 0) {
+        $state = 'Blocked'
+        $headline = 'No tool definitions were loaded.'
+    }
+    elseif ($parts.Count -gt 0) {
+        $state = 'Blocked'
+        $headline = ($parts -join ' ') + ' Click Download Missing Tools. Problems are listed first below.'
+    }
+    else {
+        $state = 'Ready'
+        $headline = "All $total tools present."
+    }
+
+    $stepState = $state
+    if ($state -eq 'Ready' -and $DefenderState -ne 'Ready') {
+        $stepState = 'Attention'
+    }
+
+    [pscustomobject]@{
+        Total = $total
+        PresentCount = $presentCount
+        MissingCount = $missingCount
+        IncompleteCount = $incompleteCount
+        State = $state
+        StepState = $stepState
+        Headline = $headline
+        SortedStatuses = $sorted
+    }
+}
+
 function Get-IbisToolAcquisitionPlan {
     [CmdletBinding()]
     param(
@@ -4653,7 +4728,16 @@ function Find-IbisUsnJournalCandidate {
             return
         }
 
+        # Velociraptor's encoded stream name, also found in exports copied out
+        # of a collection to a plain folder.
+        & $addCandidate ([System.IO.Path]::Combine($ExtendDirectory, '$UsnJrnl%3A$J')) 'EncodedJournalStream'
+
         foreach ($candidateFile in @(Get-ChildItem -LiteralPath $ExtendDirectory -File -Force -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            if ($candidateFile.Name -like '*.idx') {
+                # Velociraptor's sparse index beside the stream, not the journal.
+                continue
+            }
+
             if ($candidateFile.Name -match '^\$UsnJrnl(?:[_\-.])\$J(?:\.[^\\/]+)?$') {
                 & $addCandidate $candidateFile.FullName 'RenamedUsnJournalStream' 'Medium'
             }
@@ -4815,9 +4899,11 @@ function Invoke-IbisMftECmdArtifact {
         -ArgumentList $argumentList `
         -WorkingDirectory (Split-Path -Path $toolPath -Parent)
 
+    $savedOutputPaths = @()
     if ($processResult.ExitCode -ne 0) {
-        $stderrName = Format-IbisHostPrefixedValue -Hostname $Hostname -Format 'MFTECmd-{0}.stderr.txt' -ArgumentList @((ConvertTo-IbisSafeFileName -Value $ArtifactName))
-        $processResult.StandardError | Out-File -LiteralPath (Join-Path $WorkingsDirectory $stderrName) -Encoding UTF8
+        # MFTECmd reports parse problems on stdout, so stderr alone can be empty.
+        $baseName = Format-IbisHostPrefixedValue -Hostname $Hostname -Format 'MFTECmd-{0}' -ArgumentList @((ConvertTo-IbisSafeFileName -Value $ArtifactName))
+        $savedOutputPaths = @(Save-IbisToolOutputForFailure -WorkingDirectory $WorkingsDirectory -BaseFileName $baseName -ProcessResult $processResult)
     }
 
     $outputPath = Join-Path $OutputDirectory $OutputFileName
@@ -4825,11 +4911,18 @@ function Invoke-IbisMftECmdArtifact {
     $message = 'MFTECmd completed.'
     if ($processResult.ExitCode -ne 0) {
         $status = 'Failed'
-        $message = "MFTECmd exited with code $($processResult.ExitCode)."
+        $message = "MFTECmd exited with $(Format-IbisProcessExitCode -ExitCode $processResult.ExitCode)."
     }
     elseif (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
-        $status = 'Completed With Warnings'
-        $message = 'MFTECmd completed, but the expected CSV output file was not found.'
+        if ([string]$processResult.StandardOutput -match 'Not enough data found') {
+            # MFTECmd exits 0 and writes nothing when a $J holds no records.
+            $status = 'Skipped'
+            $message = 'MFTECmd found no records to parse. The file is empty or holds no data.'
+        }
+        else {
+            $status = 'Completed With Warnings'
+            $message = 'MFTECmd completed, but the expected CSV output file was not found.'
+        }
     }
 
     [pscustomobject]@{
@@ -4842,8 +4935,50 @@ function Invoke-IbisMftECmdArtifact {
         Status = $status
         ExitCode = $processResult.ExitCode
         CommandLine = $processResult.CommandLine
+        SavedOutputPaths = @($savedOutputPaths)
         Message = $message
     }
+}
+
+function Get-IbisMftECmdTimestampedMftOutput {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory
+    )
+
+    # The CSV MFTECmd 2026.10 and later writes for -m during a $J pass. --csvf
+    # names only the $J CSV, so this one keeps MFTECmd's own timestamped name.
+    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
+        return @()
+    }
+
+    @(Get-ChildItem -LiteralPath $OutputDirectory -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d{14}_MFTECmd_\$MFT_Output\.csv$' } |
+        Sort-Object Name -Descending)
+}
+
+function Test-IbisEmptyArtifactFile {
+    [CmdletBinding()]
+    param(
+        [string]$Path
+    )
+
+    # Only a readable file of zero bytes counts as empty. A stream path such as
+    # X:\$Extend\$UsnJrnl:$J cannot be sized here, so MFTECmd decides for it.
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            return ((Get-Item -LiteralPath $Path -Force -ErrorAction Stop).Length -eq 0)
+        }
+    }
+    catch {
+    }
+
+    $false
 }
 
 function Invoke-IbisNtfsMetadata {
@@ -4873,6 +5008,7 @@ function Invoke-IbisNtfsMetadata {
     $mftPath = Find-IbisNtfsArtifactPath -SourceRoot $SourceRoot -ArtifactName '$MFT'
     $usnJournalCandidate = Find-IbisUsnJournalCandidate -SourceRoot $SourceRoot
     $usnJournalPath = if ($null -ne $usnJournalCandidate) { $usnJournalCandidate.Path } else { $null }
+    $usnJournalEmpty = Test-IbisEmptyArtifactFile -Path $usnJournalPath
     $locatedArtifacts = @(
         [pscustomobject]@{
             Name = '$MFT'
@@ -4891,9 +5027,13 @@ function Invoke-IbisNtfsMetadata {
             DiscoveryConfidence = if ($null -ne $usnJournalCandidate) { $usnJournalCandidate.DiscoveryConfidence } else { $null }
             OutputFileName = (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'MFTECmd-UsnJrnl-J-Output.csv')
             Found = -not [string]::IsNullOrWhiteSpace($usnJournalPath)
-            ReadyToProcess = (-not [string]::IsNullOrWhiteSpace($usnJournalPath) -and -not [string]::IsNullOrWhiteSpace($mftPath))
+            Empty = $usnJournalEmpty
+            ReadyToProcess = (-not [string]::IsNullOrWhiteSpace($usnJournalPath) -and -not [string]::IsNullOrWhiteSpace($mftPath) -and -not $usnJournalEmpty)
             Message = if ([string]::IsNullOrWhiteSpace($usnJournalPath)) {
                 'USN Journal $J was not found.'
+            }
+            elseif ($usnJournalEmpty) {
+                "USN Journal `$J was found at $usnJournalPath, but it is empty (0 bytes). There are no USN records to parse."
             }
             elseif ([string]::IsNullOrWhiteSpace($mftPath)) {
                 'USN Journal $J was found, but $MFT was not found; MFTECmd requires $MFT for USN Journal processing.'
@@ -4924,18 +5064,98 @@ function Invoke-IbisNtfsMetadata {
         New-Item -ItemType Directory -Path $workingsDirectory -Force | Out-Null
     }
 
+    # One MFTECmd pass where possible. With -m, MFTECmd 2026.10 and later parses
+    # $MFT to resolve $J parent paths and also writes the full $MFT CSV, the same
+    # bytes an $MFT-only pass gives. So run the $J pass first and keep that CSV.
+    # Older MFTECmd, a failed $J pass, or no usable $J leave no $MFT CSV; only
+    # then run the $MFT-only pass.
+    $mftArtifact = $locatedArtifacts[0]
+    $usnArtifact = $locatedArtifacts[1]
+    $mftOutputPath = Join-Path $outputDirectory $mftArtifact.OutputFileName
     $toolResults = @()
-    foreach ($artifact in @($locatedArtifacts | Where-Object { $_.ReadyToProcess })) {
-        $toolResults += Invoke-IbisMftECmdArtifact `
+    $renamedOutputs = @()
+    $warnings = @()
+    $mftCsvFromJournalPass = $false
+    $fallbackReason = $null
+
+    if ($usnArtifact.ReadyToProcess) {
+        $existingTimestamped = @(Get-IbisMftECmdTimestampedMftOutput -OutputDirectory $outputDirectory | ForEach-Object { $_.FullName })
+        $usnResult = Invoke-IbisMftECmdArtifact `
             -ToolsRoot $ToolsRoot `
             -ToolDefinitions $ToolDefinitions `
-            -ArtifactPath $artifact.SourcePath `
-            -ArtifactName $artifact.Name `
+            -ArtifactPath $usnArtifact.SourcePath `
+            -ArtifactName $usnArtifact.Name `
             -OutputDirectory $outputDirectory `
-            -OutputFileName $artifact.OutputFileName `
-            -MftPath $artifact.MftPath `
+            -OutputFileName $usnArtifact.OutputFileName `
+            -MftPath $usnArtifact.MftPath `
             -WorkingsDirectory $workingsDirectory `
             -Hostname $safeHost
+        $usnResult | Add-Member -NotePropertyName Pass -NotePropertyValue 'UsnJournalWithMft' -Force
+        $toolResults += $usnResult
+
+        $newTimestamped = @(Get-IbisMftECmdTimestampedMftOutput -OutputDirectory $outputDirectory | Where-Object { $existingTimestamped -notcontains $_.FullName })
+        if ($usnResult.ExitCode -eq 0 -and $newTimestamped.Count -gt 0) {
+            try {
+                Move-Item -LiteralPath $newTimestamped[0].FullName -Destination $mftOutputPath -Force -ErrorAction Stop
+                $renamedOutputs += [pscustomobject]@{ OriginalPath = $newTimestamped[0].FullName; NewPath = $mftOutputPath }
+                $mftCsvFromJournalPass = $true
+                $toolResults += [pscustomobject]@{
+                    ToolId = $usnResult.ToolId
+                    ArtifactName = $mftArtifact.Name
+                    SourcePath = $mftArtifact.SourcePath
+                    MftPath = $null
+                    OutputDirectory = $outputDirectory
+                    OutputPath = $mftOutputPath
+                    Status = 'Completed'
+                    Pass = 'SharedWithUsnJournal'
+                    ExitCode = $usnResult.ExitCode
+                    Message = 'MFTECmd wrote the $MFT CSV during the USN Journal pass, so $MFT was parsed once.'
+                }
+            }
+            catch {
+                $fallbackReason = "the `$MFT CSV from the USN Journal pass could not be renamed: $($_.Exception.Message)"
+            }
+        }
+        elseif ($newTimestamped.Count -gt 0) {
+            # The $J pass did not finish cleanly, so its $MFT CSV may be partial.
+            # Keep it out of the analyst's folder.
+            foreach ($partial in $newTimestamped) {
+                $partialPath = Join-Path $workingsDirectory ($partial.Name + '.incomplete.txt')
+                try {
+                    Move-Item -LiteralPath $partial.FullName -Destination $partialPath -Force -ErrorAction Stop
+                    $renamedOutputs += [pscustomobject]@{ OriginalPath = $partial.FullName; NewPath = $partialPath }
+                    $warnings += "The USN Journal pass did not finish cleanly. Its partial `$MFT CSV was moved to $partialPath."
+                }
+                catch {
+                    $warnings += "The USN Journal pass did not finish cleanly. Its partial `$MFT CSV at $($partial.FullName) could not be moved: $($_.Exception.Message)"
+                }
+            }
+            $fallbackReason = 'the USN Journal pass did not finish cleanly'
+        }
+        elseif ($usnResult.ExitCode -eq 0) {
+            $fallbackReason = 'the USN Journal pass wrote no $MFT CSV (MFTECmd before 2026.10, or no USN records)'
+        }
+        else {
+            $fallbackReason = 'the USN Journal pass failed'
+        }
+    }
+
+    if (-not $mftCsvFromJournalPass -and $mftArtifact.ReadyToProcess) {
+        $mftResult = Invoke-IbisMftECmdArtifact `
+            -ToolsRoot $ToolsRoot `
+            -ToolDefinitions $ToolDefinitions `
+            -ArtifactPath $mftArtifact.SourcePath `
+            -ArtifactName $mftArtifact.Name `
+            -OutputDirectory $outputDirectory `
+            -OutputFileName $mftArtifact.OutputFileName `
+            -WorkingsDirectory $workingsDirectory `
+            -Hostname $safeHost
+        $mftResult | Add-Member -NotePropertyName Pass -NotePropertyValue 'MftOnly' -Force
+        if ($fallbackReason) {
+            $mftResult | Add-Member -NotePropertyName FallbackReason -NotePropertyValue $fallbackReason -Force
+            $mftResult.Message = "$($mftResult.Message) Ran a separate `$MFT pass because $fallbackReason."
+        }
+        $toolResults += $mftResult
     }
 
     $summaryPath = Join-Path $workingsDirectory (New-IbisHostPrefixedFileName -Hostname $safeHost -Suffix 'NTFS-Metadata.json')
@@ -4949,6 +5169,9 @@ function Invoke-IbisNtfsMetadata {
         WorkingsDirectory = $workingsDirectory
         LocatedArtifacts = $locatedArtifacts
         ToolResults = @($toolResults)
+        MftCsvFromJournalPass = $mftCsvFromJournalPass
+        RenamedOutputs = @($renamedOutputs)
+        Warnings = @($warnings)
     }
     $payload | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $summaryPath -Encoding UTF8
 
@@ -4958,9 +5181,12 @@ function Invoke-IbisNtfsMetadata {
         $status = 'Failed'
         $message = 'MFTECmd failed for one or more NTFS metadata files. See summary JSON for details.'
     }
-    elseif (@($toolResults | Where-Object { $_.Status -match 'Warnings' }).Count -gt 0) {
+    elseif (@($toolResults | Where-Object { $_.Status -match 'Warnings' }).Count -gt 0 -or $warnings.Count -gt 0) {
         $status = 'Completed With Warnings'
         $message = 'NTFS metadata processing completed with warning(s). See summary JSON for details.'
+    }
+    if ($usnArtifact.Empty) {
+        $message = "$message USN Journal `$J is empty, so only `$MFT was parsed."
     }
 
     [pscustomobject]@{
@@ -4968,6 +5194,7 @@ function Invoke-IbisNtfsMetadata {
         Status = $status
         SourceRoot = $SourceRoot
         LocatedArtifacts = $locatedArtifacts
+        RenamedOutputs = @($renamedOutputs)
         HostOutputRoot = $hostOutputRoot
         OutputDirectory = $outputDirectory
         JsonPath = $summaryPath
@@ -8396,6 +8623,7 @@ Export-ModuleMember -Function Get-IbisConfig
 Export-ModuleMember -Function Save-IbisConfigPathSetting
 Export-ModuleMember -Function Get-IbisToolDefinition
 Export-ModuleMember -Function Test-IbisToolStatus
+Export-ModuleMember -Function Get-IbisToolSetSummary
 Export-ModuleMember -Function Get-IbisToolAcquisitionPlan
 Export-ModuleMember -Function Format-IbisToolAcquisitionPlan
 Export-ModuleMember -Function Write-IbisProgressEvent
@@ -8490,6 +8718,8 @@ Export-ModuleMember -Function Find-IbisNtfsArtifactPath
 Export-ModuleMember -Function Test-IbisNtfsSpecialFilePath
 Export-ModuleMember -Function Find-IbisUsnJournalPath
 Export-ModuleMember -Function Invoke-IbisMftECmdArtifact
+Export-ModuleMember -Function Get-IbisMftECmdTimestampedMftOutput
+Export-ModuleMember -Function Test-IbisEmptyArtifactFile
 Export-ModuleMember -Function Invoke-IbisNtfsMetadata
 Export-ModuleMember -Function Get-IbisSrumDatabasePath
 Export-ModuleMember -Function Rename-IbisSrumECmdOutput

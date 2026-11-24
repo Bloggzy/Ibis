@@ -4,6 +4,22 @@ All notable Ibis changes are recorded here.
 
 Ibis uses pre-1.0 semantic-style versioning while it is still in beta. Patch releases such as `v0.5.1` are intended for incremental project changes and small feature additions.
 
+## v0.7.8 - 2026-11-24
+
+- NTFS Metadata now parses `$MFT` once instead of twice. Ibis ran MFTECmd against `$MFT`, then again against `$J` with `-m $MFT` to fill in parent paths. MFTECmd 2026.10 also writes the full `$MFT` CSV during that `-m` pass, byte for byte the same as the first pass, under its own timestamped name. So every run parsed `$MFT` twice and left a duplicate `<timestamp>_MFTECmd_$MFT_Output.csv` beside `HOSTNAME-MFTECmd-MFT-Output.csv`. On a 1.2 GB `$MFT` that duplicate is about 650 MB. Ibis now runs the `$J` pass first and renames its `$MFT` CSV. The `$J` output is unchanged.
+- A separate `$MFT` pass still runs when the `$J` pass writes no `$MFT` CSV: MFTECmd before 2026.10 (2026.5.0 does not write it), a failed `$J` pass, no `$J`, or an empty `$J`. The summary JSON records which pass wrote each CSV (`Pass`) and why a fallback ran (`FallbackReason`). A `$MFT` CSV from a `$J` pass that did not finish cleanly is moved to `_Working` as `<name>.incomplete.txt`, not used.
+- Fixed a USN Journal that was never found. An export with `$Extend\$UsnJrnl%3A$J` directly under the source root, rather than below `uploads\ntfs`, was missed, and the journal was skipped without a warning. Ibis also no longer takes a Velociraptor `.idx` index file, such as `$J.idx`, for the journal.
+- An empty (zero-byte) `$J` is now skipped with a clear message, and `$MFT` is still processed. Before, MFTECmd was run against it, exited 0 with `Not enough data found`, and the module reported `Completed With Warnings` because the expected CSV was not found.
+- A failed MFTECmd pass now saves stdout as well as stderr under `_Working`, and reports a crash by name rather than as a negative exit code.
+- Missing tools can no longer hide on the `Setup tools` tab. The `5. Tool management` tick copied the Defender state and never looked at the tools, so it showed green with every Eric Zimmerman tool missing. The list kept file order, which put the Eric Zimmerman tools below the visible rows, and the only count was in the status bar. Now:
+  - The step 5 tick comes from the tools as well as Defender: red if any tool is missing, amber if an install is incomplete or Defender exclusions are not confirmed, green only when both are fine.
+  - Step 5 has a summary line, such as `11 of 22 tools missing. Click Download Missing Tools.`, above the Defender line.
+  - Missing tools are listed first, then incomplete installs, then present tools. File order is kept within each group. The order holds after a download too, because the list is now filled from one place.
+  - A tool with files but no runnable executable (`Partial`, `Needs Normalization`, `Ambiguous Existing Versions`) counts as a problem and turns step 5 red, the same as a missing tool.
+- Audited every green tick and success message for checks that report success without checking. The Setup tab checks for PowerShell readiness, Defender, long paths, Visual C++, .NET, and administrator rights all read the real state. Two more false successes were found and fixed:
+  - The end-of-run popup always said `Ibis processing run complete.` with an information icon, even when every module failed. It now gives the worked, warning, failed, and skipped counts, names the failed and warning modules, and uses a warning or error icon and title when something went wrong or every module was skipped.
+  - The run summary counted `Completed With Warnings` as worked and never named those modules, so a module whose expected output was missing read as a clean success. The summary now reads `N worked, N worked with warnings, N failed, N skipped`, and lists each warning module with its message. A result with no status counts as a warning, not as worked.
+
 ## v0.7.7 - 2026-10-25
 
 - Fixed registry hive transaction replay, which had stopped taking effect. Ibis ran `rla` with `--out` pointing at the prepared hive cache and `--nop`, and assumed the replayed hive would come back under its own name. `rla` 2026.10 names its output `drive_profile_name` instead, even without `--cn`, so a cleaned `NTUSER.dat` arrived as something like `C__Working_NTUSER.dat` and was never used. Ibis re-checked the untouched cached copy, reported `Hive still appears dirty after transaction replay`, and every later tool read the dirty hive while the cleaned one sat unused beside it.

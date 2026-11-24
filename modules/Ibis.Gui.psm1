@@ -371,6 +371,68 @@ function Get-IbisSkippedToolResult {
     $skipped.ToArray()
 }
 
+function Get-IbisProcessingCompletionNotice {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$ModuleResults = @()
+    )
+
+    # The popup is the one thing an analyst who walked away will see. It once
+    # said 'run complete' with an information icon whatever happened, so a run
+    # where every module failed looked the same as a clean one.
+    $results = @($ModuleResults)
+    $nameOf = {
+        param($ModuleResult)
+        $name = [string]$ModuleResult.ModuleName
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = [string]$ModuleResult.ModuleId }
+        $name
+    }
+
+    $failed = @($results | Where-Object { $_.ErrorMessage -or ($_.Result -and [string]$_.Result.Status -eq 'Failed') })
+    $warned = @($results | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -notin @('Completed', 'Failed', 'Skipped') })
+    $worked = @($results | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -eq 'Completed' })
+    $skipped = @($results | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -eq 'Skipped' })
+
+    $counts = "$($worked.Count) worked, $($warned.Count) with warnings, $($failed.Count) failed, $($skipped.Count) skipped."
+    $lines = @()
+    if ($failed.Count -gt 0) {
+        $lines += "Failed: $((@($failed | ForEach-Object { & $nameOf $_ })) -join ', ')"
+    }
+    if ($warned.Count -gt 0) {
+        $lines += "With warnings: $((@($warned | ForEach-Object { & $nameOf $_ })) -join ', ')"
+    }
+
+    if ($results.Count -eq 0) {
+        return [pscustomobject]@{ Title = 'Ibis Processing Complete'; Icon = 'Warning'; Message = 'Ibis processing run finished, but no module reported a result.' }
+    }
+
+    if ($failed.Count -gt 0) {
+        $title = 'Ibis Processing Finished With Failures'
+        $icon = 'Error'
+    }
+    elseif ($warned.Count -gt 0) {
+        $title = 'Ibis Processing Finished With Warnings'
+        $icon = 'Warning'
+    }
+    elseif ($worked.Count -eq 0) {
+        $title = 'Ibis Processing Complete'
+        $icon = 'Warning'
+        $lines += 'Every selected module was skipped. Check the source folder and the run log.'
+    }
+    else {
+        $title = 'Ibis Processing Complete'
+        $icon = 'Information'
+    }
+
+    $message = "Ibis processing run complete.`r`n`r`n$counts"
+    if ($lines.Count -gt 0) {
+        $message += "`r`n`r`n" + ($lines -join "`r`n") + "`r`n`r`nSee the run log for details."
+    }
+
+    [pscustomobject]@{ Title = $title; Icon = $icon; Message = $message }
+}
+
 function Format-IbisProcessingRunSummary {
     [CmdletBinding()]
     param(
@@ -381,10 +443,33 @@ function Format-IbisProcessingRunSummary {
     $moduleResults = @($ModuleResults)
     $failedModules = @($moduleResults | Where-Object { $_.ErrorMessage -or ($_.Result -and [string]$_.Result.Status -eq 'Failed') })
     $skippedModules = @($moduleResults | Where-Object { $_.Result -and [string]$_.Result.Status -eq 'Skipped' })
-    $workedModules = @($moduleResults | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -ne 'Failed' -and [string]$_.Result.Status -ne 'Skipped' })
+    # Only a plain 'Completed' counts as worked. 'Completed With Warnings', or a
+    # result with no status at all, was once counted as worked and never named,
+    # so a module whose expected output was missing read as a clean success.
+    $warningModules = @($moduleResults | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -notin @('Completed', 'Failed', 'Skipped') })
+    $workedModules = @($moduleResults | Where-Object { -not $_.ErrorMessage -and $_.Result -and [string]$_.Result.Status -eq 'Completed' })
 
     $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add("Processing summary: $($workedModules.Count) worked, $($failedModules.Count) failed, $($skippedModules.Count) skipped.")
+    $lines.Add("Processing summary: $($workedModules.Count) worked, $($warningModules.Count) worked with warnings, $($failedModules.Count) failed, $($skippedModules.Count) skipped.")
+
+    if ($warningModules.Count -gt 0) {
+        $lines.Add('Items with warnings:')
+        foreach ($moduleResult in $warningModules) {
+            $moduleName = [string]$moduleResult.ModuleName
+            if ([string]::IsNullOrWhiteSpace($moduleName)) {
+                $moduleName = [string]$moduleResult.ModuleId
+            }
+            $statusText = [string]$moduleResult.Result.Status
+            if ([string]::IsNullOrWhiteSpace($statusText)) {
+                $statusText = 'No status reported'
+            }
+            $message = [string]$moduleResult.Result.Message
+            if ([string]::IsNullOrWhiteSpace($message)) {
+                $message = 'No message was provided.'
+            }
+            $lines.Add("- ${moduleName} (${statusText}): $message")
+        }
+    }
 
     if ($failedModules.Count -eq 0) {
         $lines.Add('No module/tool failures were reported.')
@@ -1863,11 +1948,19 @@ function Show-IbisGui {
     $reinstallSelectedToolButton.Enabled = $false
     $toolActionsGroup.Controls.Add($reinstallSelectedToolButton)
 
+    # The tool list below is taller than its box, so the count of missing tools
+    # is stated here where it cannot be scrolled out of sight.
+    $toolSetSummaryLabel = New-Object System.Windows.Forms.Label
+    $toolSetSummaryLabel.Location = New-Object System.Drawing.Point(12, 148)
+    $toolSetSummaryLabel.Size = New-Object System.Drawing.Size(332, 40)
+    $toolSetSummaryLabel.Text = 'Checking tools...'
+    $toolActionsGroup.Controls.Add($toolSetSummaryLabel)
+
     # Says whether the steps on the left are done, right beside the button that
     # depends on them.
     $downloadReadinessLabel = New-Object System.Windows.Forms.Label
-    $downloadReadinessLabel.Location = New-Object System.Drawing.Point(12, 148)
-    $downloadReadinessLabel.Size = New-Object System.Drawing.Size(332, 84)
+    $downloadReadinessLabel.Location = New-Object System.Drawing.Point(12, 192)
+    $downloadReadinessLabel.Size = New-Object System.Drawing.Size(332, 78)
     $downloadReadinessLabel.Text = 'Checking Defender exclusions...'
     $toolActionsGroup.Controls.Add($downloadReadinessLabel)
     $toolList = New-Object System.Windows.Forms.ListView
@@ -2352,6 +2445,52 @@ function Show-IbisGui {
         $StepGroup.ForeColor = [System.Drawing.Color]::FromArgb($indicator.Red, $indicator.Green, $indicator.Blue)
     }
 
+    # Step 5 depends on two checks that finish at different times: the tool
+    # list and the Defender state. Keep the latest of each and decide from both.
+    $toolStepInputs = @{ Statuses = $null; DefenderState = 'Unknown' }
+
+    $updateToolStepState = {
+        if ($null -eq $toolStepInputs.Statuses) {
+            & $setSetupStepState $toolActionsGroup $setupStepTitles.Tools 'Unknown'
+            return
+        }
+
+        $summary = Get-IbisToolSetSummary -ToolStatuses @($toolStepInputs.Statuses) -DefenderState $toolStepInputs.DefenderState
+        & $setSetupStepState $toolActionsGroup $setupStepTitles.Tools $summary.StepState
+        $summaryIndicator = Get-IbisSetupStepIndicator -State $summary.State
+        $toolSetSummaryLabel.Text = '{0} {1}' -f $summaryIndicator.Symbol, $summary.Headline
+        $toolSetSummaryLabel.ForeColor = [System.Drawing.Color]::FromArgb($summaryIndicator.Red, $summaryIndicator.Green, $summaryIndicator.Blue)
+        $summary
+    }
+
+    $fillToolList = {
+        param([object[]]$Statuses)
+
+        $toolStepInputs.Statuses = @($Statuses)
+        $summary = & $updateToolStepState
+        $toolList.BeginUpdate()
+        try {
+            $toolList.Items.Clear()
+            foreach ($status in @($summary.SortedStatuses)) {
+                $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
+                $item.Tag = $status
+                [void]$item.SubItems.Add($status.Name)
+                [void]$item.SubItems.Add($status.ExpectedPath)
+                if ($status.Present) {
+                    $item.ForeColor = [System.Drawing.Color]::DarkGreen
+                }
+                else {
+                    $item.ForeColor = [System.Drawing.Color]::DarkRed
+                }
+                [void]$toolList.Items.Add($item)
+            }
+        }
+        finally {
+            $toolList.EndUpdate()
+        }
+        $summary
+    }
+
     $updateToolsFolderButtonState = {
         $openToolsFolderButton.Enabled = (-not [string]::IsNullOrWhiteSpace($toolsTextBox.Text) -and (Test-Path -LiteralPath $toolsTextBox.Text -PathType Container))
     }
@@ -2448,12 +2587,15 @@ function Show-IbisGui {
             $downloadReadinessLabel.Text = '{0} Defender exclusion state could not be read: {1}' -f $failureIndicator.Symbol, $_.Exception.Message
             $downloadReadinessLabel.ForeColor = [System.Drawing.Color]::FromArgb($failureIndicator.Red, $failureIndicator.Green, $failureIndicator.Blue)
             & $setSetupStepState $defenderActionsGroup $setupStepTitles.Defender 'Attention'
+            $toolStepInputs.DefenderState = 'Attention'
+            [void](& $updateToolStepState)
             return $null
         }
 
         $defenderStepState = if ($downloadReadiness.ShouldWarn) { 'Attention' } else { 'Ready' }
         & $setSetupStepState $defenderActionsGroup $setupStepTitles.Defender $defenderStepState
-        & $setSetupStepState $toolActionsGroup $setupStepTitles.Tools $defenderStepState
+        $toolStepInputs.DefenderState = $defenderStepState
+        [void](& $updateToolStepState)
 
         $indicator = Get-IbisSetupStepIndicator -State $defenderStepState
         if ($downloadReadiness.ShouldWarn) {
@@ -2542,21 +2684,8 @@ function Show-IbisGui {
     $refreshToolStatusList = {
         & $updateToolsFolderButtonState
         $runtimeStatus = & $updateRuntimePrereqStatus
-        $toolList.Items.Clear()
         $statuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
-        foreach ($status in $statuses) {
-            $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
-            $item.Tag = $status
-            [void]$item.SubItems.Add($status.Name)
-            [void]$item.SubItems.Add($status.ExpectedPath)
-            if ($status.Present) {
-                $item.ForeColor = [System.Drawing.Color]::DarkGreen
-            }
-            else {
-                $item.ForeColor = [System.Drawing.Color]::DarkRed
-            }
-            [void]$toolList.Items.Add($item)
-        }
+        [void](& $fillToolList $statuses)
 
         $missing = @($statuses | Where-Object { -not $_.Present })
         $statusLabel.Text = "$($statuses.Count) tools checked; $($missing.Count) missing"
@@ -3087,21 +3216,8 @@ function Show-IbisGui {
                 Write-IbisGuiLogFileLine -LogFilePath $sessionLogPath -Message $resultMessage
             }
 
-            $toolList.Items.Clear()
             $updatedStatuses = @(Test-IbisToolStatus -ToolsRoot $toolsTextBox.Text -ToolDefinitions $toolDefinitions)
-            foreach ($status in $updatedStatuses) {
-            $item = New-Object System.Windows.Forms.ListViewItem($status.Status)
-            $item.Tag = $status
-                [void]$item.SubItems.Add($status.Name)
-                [void]$item.SubItems.Add($status.ExpectedPath)
-                if ($status.Present) {
-                    $item.ForeColor = [System.Drawing.Color]::DarkGreen
-                }
-                else {
-                    $item.ForeColor = [System.Drawing.Color]::DarkRed
-                }
-                [void]$toolList.Items.Add($item)
-            }
+            [void](& $fillToolList $updatedStatuses)
 
             $remainingMissing = @($updatedStatuses | Where-Object { -not $_.Present })
             $statusLabel.Text = "Download complete; $($remainingMissing.Count) tools still missing"
@@ -3451,7 +3567,10 @@ function Show-IbisGui {
                 $statusLabel.Text = 'Processing module run complete'
                 $runProgressLabel.Text = 'Run complete'
                 Add-IbisLogLine -LogTextBox $logTextBox -Message 'Processing module run complete'
-                $completionNotificationMessage = 'Ibis processing run complete.'
+                $completionNotice = Get-IbisProcessingCompletionNotice -ModuleResults $moduleResults
+                $completionNotificationMessage = $completionNotice.Message
+                $completionNotificationTitle = $completionNotice.Title
+                $completionNotificationIcon = $completionNotice.Icon
             }
             & $updateOutputWarning
         }
@@ -3821,6 +3940,7 @@ Export-ModuleMember -Function ConvertTo-IbisGuiDisplayText
 Export-ModuleMember -Function Get-IbisFailedToolResult
 Export-ModuleMember -Function Get-IbisSkippedToolResult
 Export-ModuleMember -Function Format-IbisProcessingRunSummary
+Export-ModuleMember -Function Get-IbisProcessingCompletionNotice
 Export-ModuleMember -Function Start-IbisHayabusaRulesUpdateRunspace
 Export-ModuleMember -Function Start-IbisProcessingRunspace
 Export-ModuleMember -Function Stop-IbisToolInstallRunspace

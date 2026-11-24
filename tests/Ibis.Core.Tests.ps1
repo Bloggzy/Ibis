@@ -6,7 +6,7 @@ Describe 'Ibis core configuration' {
     It 'loads the main configuration' {
         $config = Get-IbisConfig -ProjectRoot $projectRoot
         $config.name | Should Be 'Ibis'
-        $config.version | Should Be '0.7.7'
+        $config.version | Should Be '0.7.8'
     }
 
     It 'records release history in the changelog' {
@@ -113,6 +113,57 @@ Describe 'Ibis core configuration' {
         }
     }
 
+    It 'names modules that completed with warnings instead of counting them as clean' {
+        $moduleResults = @(
+            [pscustomobject]@{ ModuleId = 'amcache'; ModuleName = 'Amcache'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Completed'; Message = 'ok' } },
+            [pscustomobject]@{ ModuleId = 'ntfs-metadata'; ModuleName = 'NTFS Metadata'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Completed With Warnings'; Message = 'Expected CSV was not found.' } },
+            [pscustomobject]@{ ModuleId = 'odd'; ModuleName = 'Odd'; ErrorMessage = $null; Result = [pscustomobject]@{ Message = 'no status' } }
+        )
+
+        $summary = @(Format-IbisProcessingRunSummary -ModuleResults $moduleResults)
+        $text = $summary -join "`n"
+
+        $summary[0] | Should Be 'Processing summary: 1 worked, 2 worked with warnings, 0 failed, 0 skipped.'
+        $text | Should Match 'Items with warnings:'
+        $text | Should Match 'NTFS Metadata \(Completed With Warnings\): Expected CSV was not found\.'
+        $text | Should Match 'Odd \(No status reported\)'
+    }
+
+    It 'shows a plain completion popup only when every module worked' {
+        $clean = Get-IbisProcessingCompletionNotice -ModuleResults @(
+            [pscustomobject]@{ ModuleId = 'a'; ModuleName = 'A'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Completed' } },
+            [pscustomobject]@{ ModuleId = 'b'; ModuleName = 'B'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Skipped' } }
+        )
+        $clean.Icon | Should Be 'Information'
+        $clean.Title | Should Be 'Ibis Processing Complete'
+
+        $warned = Get-IbisProcessingCompletionNotice -ModuleResults @(
+            [pscustomobject]@{ ModuleId = 'a'; ModuleName = 'A'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Completed With Warnings' } }
+        )
+        $warned.Icon | Should Be 'Warning'
+        $warned.Message | Should Match 'With warnings: A'
+
+        $failed = Get-IbisProcessingCompletionNotice -ModuleResults @(
+            [pscustomobject]@{ ModuleId = 'a'; ModuleName = 'A'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Completed' } },
+            [pscustomobject]@{ ModuleId = 'srum'; ModuleName = 'SRUM'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Failed' } },
+            [pscustomobject]@{ ModuleId = 'x'; ModuleName = 'Chainsaw'; ErrorMessage = 'threw'; Result = $null }
+        )
+        $failed.Icon | Should Be 'Error'
+        $failed.Title | Should Be 'Ibis Processing Finished With Failures'
+        $failed.Message | Should Match 'Failed: SRUM, Chainsaw'
+        $failed.Message | Should Match '1 worked, 0 with warnings, 2 failed, 0 skipped'
+    }
+
+    It 'warns in the completion popup when every module was skipped or nothing reported' {
+        $allSkipped = Get-IbisProcessingCompletionNotice -ModuleResults @(
+            [pscustomobject]@{ ModuleId = 'a'; ModuleName = 'A'; ErrorMessage = $null; Result = [pscustomobject]@{ Status = 'Skipped' } }
+        )
+        $allSkipped.Icon | Should Be 'Warning'
+        $allSkipped.Message | Should Match 'Every selected module was skipped'
+
+        (Get-IbisProcessingCompletionNotice -ModuleResults @()).Icon | Should Be 'Warning'
+    }
+
     It 'formats processing run summaries with failed module details' {
         $moduleResults = @(
             [pscustomobject]@{
@@ -158,7 +209,7 @@ Describe 'Ibis core configuration' {
 
         $summary = @(Format-IbisProcessingRunSummary -ModuleResults $moduleResults)
 
-        $summary[0] | Should Be 'Processing summary: 1 worked, 1 failed, 1 skipped.'
+        $summary[0] | Should Be 'Processing summary: 1 worked, 0 worked with warnings, 1 failed, 1 skipped.'
         ($summary -join "`n") | Should Match 'SRUM: SrumECmd failed'
         ($summary -join "`n") | Should Match 'Tool zimmerman-srumecmd: SrumECmd is missing'
         ($summary -join "`n") | Should Match 'Skipped items:'
@@ -1200,6 +1251,107 @@ Describe 'Ibis setup tab layout' {
 
         $handler | Should Match 'updateDownloadReadiness'
         $handler | Should Match 'Defender Exclusions Are Not Confirmed'
+    }
+
+    It 'decides the tool management step from the tool list, not from Defender alone' {
+        # The step 5 tick once copied the Defender state, so it showed green
+        # while every Eric Zimmerman tool was missing below the fold.
+        $guiText | Should Not Match 'setSetupStepState \$toolActionsGroup \$setupStepTitles\.Tools \$defenderStepState'
+        $guiText | Should Match 'Get-IbisToolSetSummary'
+    }
+
+    It 'fills the tool list from one place so every refresh is sorted' {
+        ([regex]::Matches($guiText, 'New-Object System\.Windows\.Forms\.ListViewItem\(\$status\.Status\)')).Count | Should Be 1
+    }
+
+    It 'keeps the tool summary and Defender labels inside the tool management box' {
+        $groupSize = Get-IbisTestControlPoint -Text $guiText -VariableName 'toolActionsGroup' -Property 'Size'
+        $summaryLocation = Get-IbisTestControlPoint -Text $guiText -VariableName 'toolSetSummaryLabel' -Property 'Location'
+        $summarySize = Get-IbisTestControlPoint -Text $guiText -VariableName 'toolSetSummaryLabel' -Property 'Size'
+        $readinessLocation = Get-IbisTestControlPoint -Text $guiText -VariableName 'downloadReadinessLabel' -Property 'Location'
+        $readinessSize = Get-IbisTestControlPoint -Text $guiText -VariableName 'downloadReadinessLabel' -Property 'Size'
+
+        ($summaryLocation.Y + $summarySize.Y -le $readinessLocation.Y) | Should Be $true
+        ($readinessLocation.Y + $readinessSize.Y -le $groupSize.Y) | Should Be $true
+    }
+}
+
+Describe 'Ibis tool set summary' {
+    function New-IbisTestToolStatus {
+        param([string]$Name, [string]$Status)
+        [pscustomobject]@{ Name = $Name; Status = $Status; Present = ($Status -eq 'Present') }
+    }
+
+    It 'lists missing tools first, then incomplete installs, then present tools, keeping file order within each' {
+        $statuses = @(
+            (New-IbisTestToolStatus -Name 'A' -Status 'Present'),
+            (New-IbisTestToolStatus -Name 'B' -Status 'Missing'),
+            (New-IbisTestToolStatus -Name 'C' -Status 'Install Incomplete'),
+            (New-IbisTestToolStatus -Name 'D' -Status 'Present'),
+            (New-IbisTestToolStatus -Name 'E' -Status 'Definition Error'),
+            (New-IbisTestToolStatus -Name 'F' -Status 'Missing')
+        )
+
+        $summary = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Ready'
+
+        (@($summary.SortedStatuses | ForEach-Object { $_.Name }) -join ',') | Should Be 'B,E,F,C,A,D'
+        $summary.MissingCount | Should Be 3
+        $summary.IncompleteCount | Should Be 1
+        $summary.PresentCount | Should Be 2
+    }
+
+    It 'blocks the step when any tool is missing, even with Defender ready' {
+        $statuses = @((New-IbisTestToolStatus -Name 'A' -Status 'Present'), (New-IbisTestToolStatus -Name 'B' -Status 'Missing'))
+
+        $summary = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Ready'
+
+        $summary.State | Should Be 'Blocked'
+        $summary.StepState | Should Be 'Blocked'
+        $summary.Headline | Should Match '^1 of 2 tools missing\.'
+        $summary.Headline | Should Match 'Download Missing Tools'
+    }
+
+    It 'blocks the step when a tool has files but cannot run, whatever the status is called' {
+        # Get-IbisToolInstallAssessment reports Partial, Needs Normalization, and
+        # Ambiguous Existing Versions. None of them leaves a runnable tool.
+        foreach ($brokenStatus in @('Partial', 'Needs Normalization', 'Ambiguous Existing Versions', 'Install Incomplete')) {
+            $statuses = @((New-IbisTestToolStatus -Name 'A' -Status 'Present'), (New-IbisTestToolStatus -Name 'B' -Status $brokenStatus))
+
+            $summary = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Ready'
+
+            $summary.State | Should Be 'Blocked'
+            $summary.MissingCount | Should Be 0
+            $summary.IncompleteCount | Should Be 1
+            $summary.Headline | Should Match '1 tool has files but cannot run'
+        }
+    }
+
+    It 'never counts a present tool with leftover versioned files as a problem' {
+        $statuses = @([pscustomobject]@{ Name = 'A'; Status = 'Present with legacy files'; Present = $true })
+
+        $summary = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Ready'
+
+        $summary.State | Should Be 'Ready'
+    }
+
+    It 'is ready only when every tool is present and Defender is ready' {
+        $statuses = @((New-IbisTestToolStatus -Name 'A' -Status 'Present'), (New-IbisTestToolStatus -Name 'B' -Status 'Present'))
+
+        $ready = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Ready'
+        $ready.State | Should Be 'Ready'
+        $ready.StepState | Should Be 'Ready'
+        $ready.Headline | Should Be 'All 2 tools present.'
+
+        $defenderPending = Get-IbisToolSetSummary -ToolStatuses $statuses -DefenderState 'Attention'
+        $defenderPending.State | Should Be 'Ready'
+        $defenderPending.StepState | Should Be 'Attention'
+    }
+
+    It 'blocks the step when no tool definitions were loaded' {
+        $summary = Get-IbisToolSetSummary -ToolStatuses @() -DefenderState 'Ready'
+
+        $summary.State | Should Be 'Blocked'
+        @($summary.SortedStatuses).Count | Should Be 0
     }
 }
 
@@ -2478,6 +2630,131 @@ Describe 'Ibis AppCompatCache, Prefetch, and NTFS metadata' {
             $usn.Found | Should Be $true
             $usn.ReadyToProcess | Should Be $true
             $usn.OutputFileName | Should Be 'TESTHOST-MFTECmd-UsnJrnl-J-Output.csv'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'finds an encoded USN Journal name under $Extend at a plain source root' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Export'
+        $extendRoot = Join-Path $sourceRoot '$Extend'
+        $usnPath = Join-Path $extendRoot '$UsnJrnl%3A$J'
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+        'usn' | Out-File -LiteralPath $usnPath -Encoding ASCII
+        'idx' | Out-File -LiteralPath ($usnPath + '.idx') -Encoding ASCII
+
+        try {
+            Find-IbisUsnJournalPath -SourceRoot $sourceRoot | Should Be $usnPath
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not take a Velociraptor index file for the USN Journal' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Export'
+        $extendRoot = Join-Path $sourceRoot '$Extend'
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+        'idx' | Out-File -LiteralPath (Join-Path $extendRoot '$J.idx') -Encoding ASCII
+
+        try {
+            Find-IbisUsnJournalPath -SourceRoot $sourceRoot | Should Be $null
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'treats only a readable zero-byte file as an empty artefact' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $emptyPath = Join-Path $tempRoot 'empty'
+        $fullPath = Join-Path $tempRoot 'full'
+        New-Item -ItemType File -Path $emptyPath -Force | Out-Null
+        'data' | Out-File -LiteralPath $fullPath -Encoding ASCII
+
+        try {
+            Test-IbisEmptyArtifactFile -Path $emptyPath | Should Be $true
+            Test-IbisEmptyArtifactFile -Path $fullPath | Should Be $false
+            Test-IbisEmptyArtifactFile -Path (Join-Path $tempRoot 'missing') | Should Be $false
+            Test-IbisEmptyArtifactFile -Path '' | Should Be $false
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'finds only the timestamped $MFT CSV that MFTECmd writes during a $J pass' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        foreach ($name in @('20261124023259_MFTECmd_$MFT_Output.csv', 'TESTHOST-MFTECmd-MFT-Output.csv', '20261124023259_MFTECmd_$J_Output.csv', 'MFTECmd_$MFT_Output.csv')) {
+            'csv' | Out-File -LiteralPath (Join-Path $tempRoot $name) -Encoding ASCII
+        }
+
+        try {
+            $found = @(Get-IbisMftECmdTimestampedMftOutput -OutputDirectory $tempRoot)
+            $found.Count | Should Be 1
+            $found[0].Name | Should Be '20261124023259_MFTECmd_$MFT_Output.csv'
+            @(Get-IbisMftECmdTimestampedMftOutput -OutputDirectory (Join-Path $tempRoot 'missing')).Count | Should Be 0
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'skips an empty USN Journal and still processes $MFT on its own' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Export'
+        $extendRoot = Join-Path $sourceRoot '$Extend'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+        'mft' | Out-File -LiteralPath (Join-Path $sourceRoot '$MFT') -Encoding ASCII
+        New-Item -ItemType File -Path (Join-Path $extendRoot '$J') -Force | Out-Null
+
+        try {
+            $result = Invoke-IbisNtfsMetadata -ToolsRoot $tempRoot -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot $outputRoot -Hostname 'TESTHOST'
+            $summary = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+            $usn = $summary.LocatedArtifacts | Where-Object { $_.Name -eq '$UsnJrnl:$J' } | Select-Object -First 1
+
+            $usn.Found | Should Be $true
+            $usn.Empty | Should Be $true
+            $usn.ReadyToProcess | Should Be $false
+            $usn.Message | Should Match 'empty \(0 bytes\)'
+            @($summary.ToolResults).Count | Should Be 1
+            $summary.ToolResults[0].ArtifactName | Should Be '$MFT'
+            $summary.ToolResults[0].Pass | Should Be 'MftOnly'
+            $result.Message | Should Match 'USN Journal \$J is empty'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'runs the USN Journal pass first and falls back to an $MFT-only pass when it fails' {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+        $sourceRoot = Join-Path $tempRoot 'Export'
+        $extendRoot = Join-Path $sourceRoot '$Extend'
+        $outputRoot = Join-Path $tempRoot 'Output'
+        New-Item -ItemType Directory -Path $extendRoot -Force | Out-Null
+        'mft' | Out-File -LiteralPath (Join-Path $sourceRoot '$MFT') -Encoding ASCII
+        'usn' | Out-File -LiteralPath (Join-Path $extendRoot '$J') -Encoding ASCII
+
+        try {
+            $result = Invoke-IbisNtfsMetadata -ToolsRoot $tempRoot -ToolDefinitions @() -SourceRoot $sourceRoot -OutputRoot $outputRoot -Hostname 'TESTHOST'
+            $summary = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+            $toolResults = @($summary.ToolResults)
+
+            $result.Status | Should Be 'Failed'
+            $summary.MftCsvFromJournalPass | Should Be $false
+            $toolResults.Count | Should Be 2
+            $toolResults[0].ArtifactName | Should Be '$UsnJrnl:$J'
+            $toolResults[0].Pass | Should Be 'UsnJournalWithMft'
+            $toolResults[1].ArtifactName | Should Be '$MFT'
+            $toolResults[1].Pass | Should Be 'MftOnly'
+            $toolResults[1].FallbackReason | Should Be 'the USN Journal pass failed'
         }
         finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force

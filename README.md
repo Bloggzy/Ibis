@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. Provided AS IS, without warranti
 
 ## Status
 
-Current version: `v0.7.7`
+Current version: `v0.7.8`
 
 Ibis is pre-1.0 beta software. The current version and default settings are stored in `config.json`, and notable changes are recorded in `CHANGELOG.md`.
 
@@ -224,7 +224,9 @@ Runs PECmd against `Windows\Prefetch`. Timestamp-prefixed PECmd outputs are rena
 
 ### NTFS Metadata
 
-Uses MFTECmd to process `$MFT` and, where found, USN Journal `$J`. Ibis searches mounted image roots and Velociraptor NTFS upload locations, including common extracted names such as `$UsnJrnl_$J`, `$UsnJrnl-$J`, and standalone `$J` files within `$Extend`.
+Uses MFTECmd to process `$MFT` and, where found, USN Journal `$J`. Ibis searches mounted image roots and Velociraptor NTFS upload locations, including common extracted names such as `$UsnJrnl%3A$J`, `$UsnJrnl_$J`, `$UsnJrnl-$J`, and standalone `$J` files within `$Extend`.
+
+When both are present, Ibis runs MFTECmd once: `-f $J -m $MFT`. MFTECmd 2026.10 and later uses `-m` to fill in `$J` parent paths and also writes the full `$MFT` CSV, which Ibis renames to `HOSTNAME-MFTECmd-MFT-Output.csv`. If that pass writes no `$MFT` CSV (an older MFTECmd, a failed pass, or no USN records), Ibis runs a separate `$MFT` pass. An empty `$J` is skipped with a message, and `$MFT` is still processed.
 
 ### SRUM
 
@@ -387,7 +389,7 @@ Windows PowerShell 5.1:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Tools\Ibis'; Import-Module .\modules\Ibis.Core.psm1 -Force; Import-Module .\modules\Ibis.Gui.psm1 -Force; Invoke-Pester -Path .\tests -PassThru | Select-Object TotalCount, PassedCount, FailedCount"
 ```
 
-As of `v0.7.7`, both test runs pass with `288` tests.
+As of `v0.7.8`, both test runs pass with `306` tests.
 
 `tests\manual` holds slower whole-module checks that are run by hand rather than as part of the Pester suite. `Verify-ParseUsbContainment.ps1` proves the ParseUSBs module cannot alter source evidence: it builds a synthetic read-only evidence tree, substitutes a stand-in parser that records its command line, runs the module, and compares a SHA-256 and last-write snapshot of the source tree taken before and after. It needs Windows PowerShell 5.1 and no real tools, evidence, or network access.
 
